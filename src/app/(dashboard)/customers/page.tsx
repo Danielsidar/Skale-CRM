@@ -226,7 +226,7 @@ export default function CustomersPage() {
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="text-right" dir="rtl">
+                      <DropdownMenuContent align="end" className="text-right">
                         <DropdownMenuItem onClick={() => handleRowClick(c)}>
                           צפה בפרופיל
                         </DropdownMenuItem>

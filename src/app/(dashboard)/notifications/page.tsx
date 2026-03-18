@@ -8,6 +8,7 @@ import { Card } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { useRouter } from "next/navigation"
+import { useBusiness } from "@/lib/hooks/useBusiness"
 import {
   type Notification,
   getNotifications,
@@ -22,6 +23,7 @@ import { he } from "date-fns/locale"
 type FilterType = "all" | "unread"
 
 export default function NotificationsPage() {
+  const { businessId } = useBusiness()
   const supabase = createClient()
   const router = useRouter()
   const [notifications, setNotifications] = useState<Notification[]>([])
@@ -29,25 +31,33 @@ export default function NotificationsPage() {
   const [filter, setFilter] = useState<FilterType>("all")
 
   const loadNotifications = useCallback(async () => {
+    if (!businessId) return;
     setLoading(true)
     const { data } = await getNotifications(supabase, {
+      businessId,
       limit: 100,
       unreadOnly: filter === "unread",
     })
-    setNotifications(data)
+    setNotifications(data || [])
     setLoading(false)
-  }, [supabase, filter])
+  }, [supabase, filter, businessId])
 
   useEffect(() => {
     loadNotifications()
   }, [loadNotifications])
 
   useEffect(() => {
+    if (!businessId) return;
     const channel = supabase
       .channel("notifications-page-realtime")
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "notifications" },
+        { 
+          event: "INSERT", 
+          schema: "public", 
+          table: "notifications",
+          filter: `business_id=eq.${businessId}`
+        },
         () => loadNotifications()
       )
       .subscribe()
@@ -55,7 +65,7 @@ export default function NotificationsPage() {
     return () => {
       supabase.removeChannel(channel)
     }
-  }, [supabase, loadNotifications])
+  }, [supabase, loadNotifications, businessId])
 
   const handleClick = async (notification: Notification) => {
     if (!notification.is_read) {
@@ -72,7 +82,8 @@ export default function NotificationsPage() {
   }
 
   const handleMarkAllRead = async () => {
-    await markAllAsRead(supabase)
+    if (!businessId) return;
+    await markAllAsRead(supabase, businessId)
     setNotifications((prev) => prev.map((n) => ({ ...n, is_read: true, read_at: new Date().toISOString() })))
   }
 

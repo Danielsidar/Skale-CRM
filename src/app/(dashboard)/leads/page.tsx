@@ -34,6 +34,7 @@ import {
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
+import type { Database } from "@/types/database.types"
 import { Input } from "@/components/ui/input"
 import { toast } from "sonner"
 import {
@@ -72,8 +73,8 @@ import {
 import { Label } from "@/components/ui/label"
 import { Calendar as CalendarIcon, FilterX } from "lucide-react"
 
-type Pipeline = { id: string, name: string, description?: string | null, product_id?: string | null }
-type Stage = { id: string, name: string, pipeline_id: string, color?: string | null, position: number, is_won: boolean, is_lost: boolean }
+type Pipeline = Database["public"]["Tables"]["pipelines"]["Row"]
+type Stage = Database["public"]["Tables"]["stages"]["Row"]
 
 export default function LeadsPage() {
   return (
@@ -1166,7 +1167,7 @@ function LeadsPageContent() {
           </div>
         ) : (
           <div className="h-full animate-in fade-in duration-500">
-            {statusFilter === "closed" ? (
+            {(statusFilter === "won" || statusFilter === "lost") ? (
               <div className="flex flex-col items-center justify-center h-full bg-white rounded-2xl border border-dashed border-slate-300 gap-4 p-8 text-center">
                 <div className="bg-slate-50 p-6 rounded-full">
                   <TableIcon className="h-12 w-12 text-slate-300" />
@@ -1265,7 +1266,7 @@ function LeadsPageContent() {
                   שינוי סטטוס גורף
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-[200px] text-right" dir="rtl">
+              <DropdownMenuContent align="start" className="w-[200px] text-right">
                 {selectedPipelineId && selectedPipelineId !== "all" ? (
                   allStages
                     .filter(s => s.pipeline_id === selectedPipelineId && !s.is_won && !s.is_lost)
@@ -1296,7 +1297,7 @@ function LeadsPageContent() {
                   הוספת תגית גורפת
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-[200px] text-right p-2" dir="rtl">
+              <DropdownMenuContent align="start" className="w-[200px] text-right p-2">
                 <div className="flex flex-col gap-2">
                   <Input 
                     placeholder="הזן תגית..."

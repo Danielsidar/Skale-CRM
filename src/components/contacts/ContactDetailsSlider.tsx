@@ -28,7 +28,7 @@ import {
   ExternalLink,
   MessageSquare,
   Video,
-  WhatsappIcon // I'll use a generic icon or Lucide one if not available
+  MapPin
 } from "lucide-react"
 import { ContactTimeline } from "./ContactTimeline"
 import { CreateAppointmentDialog } from "./CreateAppointmentDialog"

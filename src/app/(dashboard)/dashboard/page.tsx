@@ -443,7 +443,7 @@ export default function DashboardPage() {
                   <YAxis tick={{ fontSize: 11, fill: "#94a3b8" }} axisLine={false} tickLine={false} allowDecimals={false} />
                   <Tooltip
                     contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12, direction: "rtl" }}
-                    formatter={(value: number) => [`${value} עסקאות`, ""]}
+                    formatter={(value: any) => [`${value} עסקאות`, ""]}
                     labelFormatter={(label) => label}
                   />
                   <Area
@@ -496,7 +496,7 @@ export default function DashboardPage() {
                     </Pie>
                     <Tooltip
                       contentStyle={{ borderRadius: 12, border: "1px solid #e2e8f0", fontSize: 12, direction: "rtl" }}
-                      formatter={(value: number, name: string) => [`${value}`, name]}
+                      formatter={(value: any, name: any) => [`${value}`, name]}
                     />
                   </PieChart>
                 </ResponsiveContainer>

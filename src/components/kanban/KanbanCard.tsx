@@ -187,7 +187,7 @@ export function KanbanCard({
                       <MoreVertical className="h-3.5 w-3.5 text-muted-foreground" />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="text-right" dir="rtl">
+                  <DropdownMenuContent align="start" className="text-right">
                     <DropdownMenuItem 
                       className="cursor-pointer justify-end gap-2 text-xs"
                       onClick={() => setIsEditOpen(true)}

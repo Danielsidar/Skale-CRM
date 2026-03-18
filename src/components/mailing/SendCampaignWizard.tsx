@@ -29,7 +29,6 @@ import Link from "next/link"
 import { EmailBuilder } from "./builder/EmailBuilder"
 import { generateEmailHTML } from "@/lib/mailing/email-html-generator"
 import { cn } from "@/lib/utils"
-import { ScrollArea } from "@/components/ui/scroll-area"
 
 import { useMailingWizardStore, Step } from "@/lib/mailing/wizard-store"
 

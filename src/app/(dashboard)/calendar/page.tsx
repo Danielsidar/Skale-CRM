@@ -45,6 +45,7 @@ import {
 import { createClient } from "@/lib/supabase/client"
 import { useBusiness } from "@/lib/hooks/useBusiness"
 import { Button } from "@/components/ui/button"
+import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
 import { EditAppointmentDialog } from "@/components/contacts/EditAppointmentDialog"
 import { BookingSettingsDialog } from "@/components/calendar/BookingSettingsDialog"

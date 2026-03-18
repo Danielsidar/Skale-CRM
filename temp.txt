@@ -1,0 +1,579 @@
+"use client"
+
+import { useEffect, useState, Suspense } from "react"
+import { useSearchParams, useRouter, usePathname } from "next/navigation"
+import { createClient } from "@/lib/supabase/client"
+import { useBusiness } from "@/lib/hooks/useBusiness"
+import { LeadsTable, LeadWithDetails } from "@/components/leads/LeadsTable"
+import { Button } from "@/components/ui/button"
+import { 
+  Plus, 
+  Search, 
+  Filter, 
+  Trash2, 
+  MoveRight, 
+  X, 
+  Target,
+  Download,
+  LayoutGrid,
+  ListFilter,
+  Table as TableIcon,
+  LayoutDashboard,
+  ChevronDown,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  MoreHorizontal
+} from "lucide-react"
+import { Input } from "@/components/ui/input"
+import { toast } from "sonner"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+import { cn } from "@/lib/utils"
+import { QuickAddDealDialog } from "@/components/kanban/QuickAddDealDialog"
+import { KanbanBoard } from "@/components/kanban/KanbanBoard"
+
+type Pipeline = { id: string, name: string, description?: string | null }
+type Stage = { id: string, name: string, pipeline_id: string, color?: string | null, position: number, is_won: boolean, is_lost: boolean }
+
+export default function LeadsPage() {
+  return (
+    <Suspense fallback={<div>טוען...</div>}>
+      <LeadsPageContent />
+    </Suspense>
+  )
+}
+
+function LeadsPageContent() {
+  const { businessId } = useBusiness()
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+  
+  const [viewMode, setViewMode] = useState<"table" | "pipeline">(
+    searchParams.get("view") === "pipeline" ? "pipeline" : "table"
+  )
+  const [selectedPipelineId, setSelectedPipelineId] = useState<string>(
+    searchParams.get("pipelineId") || ""
+  )
+
+  // Sync state with URL params
+  useEffect(() => {
+    const view = searchParams.get("view")
+    const pipelineId = searchParams.get("pipelineId")
+    
+    if (view === "pipeline" || view === "table") {
+      setViewMode(view as "table" | "pipeline")
+    }
+    if (pipelineId) {
+      setSelectedPipelineId(pipelineId)
+    }
+  }, [searchParams])
+
+  const updateViewMode = (mode: "table" | "pipeline") => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("view", mode)
+    router.push(`${pathname}?${params.toString()}`)
+  }
+
+  const updatePipeline = (id: string) => {
+    const params = new URLSearchParams(searchParams.toString())
+    params.set("pipelineId", id)
+    params.set("view", "pipeline")
+    router.push(`${pathname}?${params.toString()}`)
+  }
+
+  const [pipelineSearchTerm, setPipelineSearchTerm] = useState("")
+  const [leads, setLeads] = useState<LeadWithDetails[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState("")
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [totalLeads, setTotalLeads] = useState(0)
+  const [selectedLeadIds, setSelectedLeadIds] = useState<string[]>([])
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false)
+  const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
+  const [pipelines, setPipelines] = useState<Pipeline[]>([])
+  const [allStages, setAllStages] = useState<Stage[]>([])
+  const [isDropdownOpen, setIsDropdownOpen] = useState(false)
+  const supabase = createClient()
+
+  const loadLeads = async () => {
+    if (!businessId) return
+    setLoading(true)
+    try {
+      // Fetch pipelines and all stages for the business (keep for selectors)
+      const { data: pData } = await supabase.from("pipelines").select("*").eq("business_id", businessId)
+      const pipelineIds = (pData || []).map(p => p.id)
+      const { data: sData } = await supabase
+        .from("stages")
+        .select("*")
+        .in("pipeline_id", pipelineIds)
+        .order("position")
+      
+      const typedPipelines = (pData || []) as Pipeline[]
+      setPipelines(typedPipelines)
+      setAllStages((sData || []) as Stage[])
+
+      if (typedPipelines.length > 0 && !selectedPipelineId) {
+        setSelectedPipelineId(typedPipelines[0].id)
+      }
+
+      // Calculate range for pagination
+      const from = (currentPage - 1) * pageSize
+      const to = from + pageSize - 1
+
+      // Build Query
+      let query = supabase
+        .from("deals")
+        .select(`
+          *,
+          pipeline:pipelines(*),
+          stage:stages(*),
+          contact:contacts(*)
+        `, { count: 'exact' })
+        .eq("business_id", businessId)
+
+      // Search (Simple ilike for title)
+      if (searchTerm) {
+        query = query.ilike('title', `%${searchTerm}%`)
+      }
+
+      const { data: dealsData, count, error: dealsError } = await query
+        .order("created_at", { ascending: false })
+        .range(from, to)
+
+      if (dealsError) throw dealsError
+
+      setLeads((dealsData as unknown as LeadWithDetails[]) || [])
+      setTotalLeads(count || 0)
+    } catch (err) {
+      toast.error("שגיאה בטעינת הלידים")
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadLeads()
+  }, [businessId, currentPage, pageSize])
+
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (currentPage !== 1) {
+        setCurrentPage(1) // Reset to first page on search
+      } else {
+        loadLeads()
+      }
+    }, 500)
+    return () => clearTimeout(timer)
+  }, [searchTerm])
+
+  const selectedPipeline = pipelines.find(p => p.id === selectedPipelineId) || pipelines[0]
+  const selectedPipelineStages = allStages.filter(s => s.pipeline_id === (selectedPipeline?.id || ""))
+  
+  const defaultPipelineId = selectedPipeline?.id || ""
+  const defaultStageId = selectedPipelineStages.find(s => !s.is_won && !s.is_lost)?.id || selectedPipelineStages[0]?.id || ""
+
+  const filteredPipelinesForSelector = pipelines.filter(p => 
+    p.name.toLowerCase().includes(pipelineSearchTerm.toLowerCase())
+  )
+
+  const handleDeleteLead = async (id: string) => {
+    if (!confirm("האם אתה בטוח שברצונך למחוק ליד זה?")) return
+    try {
+      const { error } = await supabase.from("deals").delete().eq("id", id)
+      if (error) throw error
+      toast.success("הליד נמחק בהצלחה")
+      setLeads(leads.filter((l) => l.id !== id))
+      setSelectedLeadIds(prev => prev.filter(selectedId => selectedId !== id))
+    } catch (err) {
+      toast.error("שגיאה במחיקת הליד")
+      console.error(err)
+    }
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedLeadIds.length === 0) return
+    if (!confirm(`האם אתה בטוח שברצונך למחוק ${selectedLeadIds.length} לידים?`)) return
+
+    setIsBulkDeleting(true)
+    try {
+      const { error } = await supabase
+        .from("deals")
+        .delete()
+        .in("id", selectedLeadIds)
+
+      if (error) throw error
+
+      toast.success(`${selectedLeadIds.length} לידים נמחקו בהצלחה`)
+      setLeads(leads.filter(l => !selectedLeadIds.includes(l.id)))
+      setSelectedLeadIds([])
+    } catch (err) {
+      toast.error("שגיאה במחיקת הלידים")
+      console.error(err)
+    } finally {
+      setIsBulkDeleting(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col h-full gap-6 pb-20 overflow-hidden" dir="rtl">
+      {/* Page Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <div className="bg-primary/10 p-3 rounded-2xl">
+            <Target className="h-6 w-6 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-black tracking-tight text-slate-900">מרכז הלידים</h1>
+            <p className="text-slate-500 text-sm font-medium">צפה ונהל את כל הלידים מכל הפייפליינים במקום אחד</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" className="gap-2 border-slate-200 h-11 rounded-xl shadow-sm hidden sm:flex">
+            <Download className="h-4 w-4" />
+            ייצוא לאקסל
+          </Button>
+          <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2 h-11 px-6 rounded-xl shadow-lg shadow-primary/20 font-bold">
+            <Plus className="h-5 w-5" />
+            הוסף ליד חדש
+          </Button>
+        </div>
+      </div>
+
+      {/* Filters and Search Bar */}
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm flex flex-col md:flex-row items-center gap-4">
+        {/* View Toggle */}
+        <div className="bg-slate-100 p-1 rounded-xl flex items-center border border-slate-200 h-11 w-full md:w-auto">
+          <Button
+            variant={viewMode === "table" ? "secondary" : "ghost"}
+            size="sm"
+            className={cn(
+              "h-9 px-4 rounded-lg gap-2 transition-all flex-1 md:flex-none",
+              viewMode === "table" ? "bg-white shadow-sm text-primary" : "text-slate-500"
+            )}
+            onClick={() => updateViewMode("table")}
+          >
+            <TableIcon className="h-4 w-4" />
+            <span className="text-sm font-bold">טבלה</span>
+          </Button>
+          <Button
+            variant={viewMode === "pipeline" ? "secondary" : "ghost"}
+            size="sm"
+            className={cn(
+              "h-9 px-4 rounded-lg gap-2 transition-all flex-1 md:flex-none",
+              viewMode === "pipeline" ? "bg-white shadow-sm text-primary" : "text-slate-500"
+            )}
+            onClick={() => updateViewMode("pipeline")}
+          >
+            <LayoutDashboard className="h-4 w-4" />
+            <span className="text-sm font-bold">פייפליין</span>
+          </Button>
+        </div>
+
+        {/* Pipeline Selector (only when in pipeline view) */}
+        {viewMode === "pipeline" && (
+          <div className="w-full md:w-64 relative animate-in fade-in slide-in-from-right-2 duration-300">
+            <Button
+              variant="outline"
+              onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+              className="w-full justify-between h-11 border-slate-200 bg-slate-50 rounded-xl px-4 hover:bg-slate-100 transition-colors"
+            >
+              <div className="flex items-center gap-2">
+                <LayoutGrid className="h-4 w-4 text-slate-400" />
+                <span className="font-bold truncate max-w-[140px]">
+                  {selectedPipeline?.name || "בחר פייפליין"}
+                </span>
+              </div>
+              <ChevronDown className={cn("h-4 w-4 shrink-0 opacity-50 transition-transform", isDropdownOpen && "rotate-180")} />
+            </Button>
+
+            {isDropdownOpen && (
+              <>
+                <div 
+                  className="fixed inset-0 z-[60]" 
+                  onClick={() => setIsDropdownOpen(false)}
+                />
+                <div className="absolute top-full left-0 right-0 mt-2 p-2 bg-white border border-slate-200 rounded-xl shadow-xl z-[70] animate-in fade-in zoom-in-95 duration-200">
+                  <div className="p-2 relative border-b border-slate-100 mb-2">
+                    <Search className="absolute right-4 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <Input 
+                      placeholder="חפש פייפליין..." 
+                      className="h-9 pr-9 text-xs border-none bg-slate-50 focus:bg-white transition-all rounded-lg"
+                      value={pipelineSearchTerm}
+                      onChange={(e) => setPipelineSearchTerm(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="max-h-[300px] overflow-y-auto">
+                    {filteredPipelinesForSelector.length === 0 ? (
+                      <div className="py-6 text-center text-slate-400 text-xs font-medium">לא נמצאו פייפליינים</div>
+                    ) : (
+                      filteredPipelinesForSelector.map((p) => (
+                        <div
+                          key={p.id}
+                          onClick={() => {
+                            updatePipeline(p.id)
+                            setIsDropdownOpen(false)
+                            setPipelineSearchTerm("")
+                          }}
+                          className={cn(
+                            "flex items-center justify-between px-3 py-2.5 rounded-lg cursor-pointer transition-colors mb-0.5 group",
+                            p.id === selectedPipelineId ? "bg-slate-50" : "hover:bg-slate-50"
+                          )}
+                        >
+                          <div className="flex items-center gap-2">
+                            <div className={cn(
+                              "h-2 w-2 rounded-full transition-all",
+                              p.id === selectedPipelineId ? "bg-primary scale-110" : "bg-slate-300 group-hover:bg-slate-400"
+                            )} />
+                            <span className={cn(
+                              "text-sm font-medium",
+                              p.id === selectedPipelineId ? "text-primary font-bold" : "text-slate-700"
+                            )}>
+                              {p.name}
+                            </span>
+                          </div>
+                          {p.id === selectedPipelineId && (
+                            <Check className="h-4 w-4 text-primary" />
+                          )}
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
+
+        <div className="relative flex-1 w-full">
+          <Search className="absolute right-4 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />
+          <Input 
+            className="pr-12 h-11 bg-slate-50 border-slate-100 focus:bg-white transition-all rounded-xl text-lg font-medium" 
+            placeholder={viewMode === "table" ? "חיפוש לפי שם, איש קשר או פייפליין..." : "חיפוש לידים בפייפליין..."} 
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        
+        <div className="flex items-center gap-2 w-full md:w-auto">
+          <Button variant="outline" className="gap-2 border-slate-200 h-11 px-4 rounded-xl font-medium bg-white hover:bg-slate-50 shadow-sm">
+            <ListFilter className="h-5 w-5 text-slate-500" />
+            סינון
+          </Button>
+        </div>
+      </div>
+
+      {/* Main Content */}
+      <div className="flex-1 flex flex-col min-h-0">
+        {loading ? (
+          <div className="flex flex-col items-center justify-center h-64 gap-4 bg-white rounded-2xl border border-dashed border-slate-300">
+            <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+            <p className="text-slate-500 font-medium">טוען נתונים מהמערכת...</p>
+          </div>
+        ) : viewMode === "table" ? (
+          <div className="flex flex-col flex-1 min-h-0">
+            <div className="flex-1 overflow-auto">
+              <LeadsTable 
+              leads={leads} 
+              onDelete={handleDeleteLead}
+              onEditSuccess={loadLeads}
+              selectedIds={selectedLeadIds}
+              onSelectionChange={setSelectedLeadIds}
+              allStages={allStages}
+            />
+          </div>
+          
+          {/* Pagination Controls */}
+          <div className="mt-4 bg-white p-4 rounded-xl border border-slate-200 flex items-center justify-between shadow-sm">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-slate-500">שורות בעמוד:</span>
+                <Select
+                  value={String(pageSize)}
+                  onValueChange={(val) => {
+                    setPageSize(Number(val))
+                    setCurrentPage(1)
+                  }}
+                >
+                  <SelectTrigger className="w-20 h-9 bg-slate-50 border-slate-200">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="10">10</SelectItem>
+                    <SelectItem value="25">25</SelectItem>
+                    <SelectItem value="50">50</SelectItem>
+                    <SelectItem value="100">100</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <span className="text-sm text-slate-500 font-medium">
+                {totalLeads > 0 ? (
+                  `מציג ${(currentPage - 1) * pageSize + 1} עד ${Math.min(currentPage * pageSize, totalLeads)} מתוך ${totalLeads}`
+                ) : (
+                  "אין לידים להצגה"
+                )}
+              </span>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 border-slate-200 rounded-lg hover:bg-slate-50"
+                onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                disabled={currentPage === 1}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              
+              <div className="flex items-center gap-1 mx-2">
+                {[...Array(Math.min(5, Math.ceil(totalLeads / pageSize)))].map((_, i) => {
+                  const pageNum = i + 1 // Basic pagination for now
+                  return (
+                    <Button
+                      key={pageNum}
+                      variant={currentPage === pageNum ? "default" : "ghost"}
+                      className={cn(
+                        "h-9 w-9 rounded-lg font-bold transition-all",
+                        currentPage === pageNum ? "shadow-md shadow-primary/20" : "text-slate-500 hover:bg-slate-100"
+                      )}
+                      onClick={() => setCurrentPage(pageNum)}
+                    >
+                      {pageNum}
+                    </Button>
+                  )
+                })}
+                {Math.ceil(totalLeads / pageSize) > 5 && (
+                  <span className="text-slate-400 px-1">
+                    <MoreHorizontal className="h-4 w-4" />
+                  </span>
+                )}
+              </div>
+
+              <Button
+                variant="outline"
+                size="icon"
+                className="h-9 w-9 border-slate-200 rounded-lg hover:bg-slate-50"
+                onClick={() => setCurrentPage(prev => Math.min(Math.ceil(totalLeads / pageSize), prev + 1))}
+                disabled={currentPage >= Math.ceil(totalLeads / pageSize)}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="h-full animate-in fade-in duration-500">
+          {selectedPipeline && (
+            <KanbanBoard
+              pipelineId={selectedPipeline.id}
+              businessId={businessId!}
+              pipeline={selectedPipeline as any}
+              stages={selectedPipelineStages as any}
+              initialDeals={leads.filter(l => l.pipeline_id === selectedPipeline.id)}
+              key={`${selectedPipeline.id}-${searchTerm}`} // Force re-render when pipeline or search changes
+              onDealsChange={(updatedDeals) => {
+                // Update the local leads state when board changes
+                setLeads(prevLeads => {
+                  const otherLeads = prevLeads.filter(l => l.pipeline_id !== selectedPipeline.id)
+                  // We need to re-attach the details for the updated deals
+                  const updatedWithDetails = (updatedDeals as any[]).map(d => ({
+                    ...d,
+                    pipeline: selectedPipeline,
+                    stage: selectedPipelineStages.find(s => s.id === d.stage_id),
+                    contact: leads.find(l => l.contact_id === d.contact_id)?.contact || null
+                  }))
+                  return [...otherLeads, ...updatedWithDetails]
+                })
+              }}
+              onDeleteDeal={handleDeleteLead}
+              selectedDealIds={selectedLeadIds}
+              onSelectionChange={setSelectedLeadIds}
+            />
+          )}
+        </div>
+      )}
+      
+      {/* Bulk Action Bar */}
+      <div 
+        className={cn(
+          "fixed bottom-8 left-1/2 -translate-x-1/2 z-50 transition-all duration-300",
+          selectedLeadIds.length > 0 ? "opacity-100 translate-y-0" : "opacity-0 translate-y-20 pointer-events-none"
+        )}
+      >
+        <div className="bg-slate-900 border border-white/10 shadow-2xl rounded-2xl px-6 py-4 flex items-center gap-8" dir="rtl">
+          <div className="flex items-center gap-4 border-l border-white/10 pl-8">
+            <div className="bg-primary text-white text-base font-black h-9 w-9 rounded-full flex items-center justify-center shadow-lg shadow-primary/40">
+              {selectedLeadIds.length}
+            </div>
+            <div className="flex flex-col">
+              <span className="text-white font-bold text-sm">לידים נבחרו</span>
+              <span className="text-slate-400 text-[10px]">פעולות גורפות זמינות</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" className="bg-white/5 border-white/10 text-white hover:bg-white/10 h-10 px-4 rounded-xl gap-2 font-medium">
+              <MoveRight className="h-4 w-4" />
+              שינוי סטטוס גורף
+            </Button>
+
+            <Button 
+              variant="destructive" 
+              size="sm" 
+              className="h-10 px-4 rounded-xl gap-2 font-bold shadow-lg shadow-rose-900/20"
+              onClick={handleBulkDelete}
+              disabled={isBulkDeleting}
+            >
+              <Trash2 className="h-4 w-4" />
+              מחיקת לידים
+            </Button>
+
+            <div className="w-px h-8 bg-white/10 mx-2" />
+
+            <Button 
+              variant="ghost" 
+              size="icon" 
+              className="h-10 w-10 text-slate-400 hover:text-white hover:bg-white/5 rounded-full transition-colors"
+              onClick={() => setSelectedLeadIds([])}
+            >
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Quick Add Dialog */}
+      {defaultPipelineId && defaultStageId && (
+        <QuickAddDealDialog
+          open={isAddDialogOpen}
+          onOpenChange={setIsAddDialogOpen}
+          pipelineId={defaultPipelineId}
+          stageId={defaultStageId}
+          onSuccess={() => {
+            loadLeads()
+            setIsAddDialogOpen(false)
+          }}
+        />
+      )}
+    </div>
+  )
+}

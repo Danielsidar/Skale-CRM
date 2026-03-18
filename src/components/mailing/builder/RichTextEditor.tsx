@@ -44,125 +44,6 @@ interface RichTextEditorProps {
   style?: React.CSSProperties
 }
 
-export function RichTextEditor({ value, onChange, onFocus, onBlur, className, style }: RichTextEditorProps) {
-  const editor = useEditor({
-    extensions: [
-      StarterKit.configure({
-        heading: {
-          levels: [1, 2, 3],
-        },
-      }),
-      Underline,
-      Link.configure({
-        openOnClick: false,
-      }),
-      TextAlign.configure({
-        types: ['heading', 'paragraph'],
-      }),
-      TextStyle,
-      Color,
-      Placeholder.configure({
-        placeholder: 'כתוב משהו...',
-      }),
-      Mention.configure({
-        HTMLAttributes: {
-          class: 'mention-variable',
-        },
-        renderLabel({ node }) {
-          return `@${node.attrs.label}`
-        },
-        suggestion: {
-          items: ({ query }) => {
-            return MENTION_VARIABLES.filter(item =>
-              item.label.toLowerCase().includes(query.toLowerCase()) || 
-              item.id.toLowerCase().includes(query.toLowerCase())
-            ).slice(0, 5)
-          },
-          render: () => {
-            let component: any
-            let popup: any
-
-            return {
-              onStart: props => {
-                component = new ReactRenderer(MentionList, {
-                  props,
-                  editor: props.editor,
-                })
-
-                if (!props.clientRect) {
-                  return
-                }
-
-                popup = tippy('body', {
-                  getReferenceClientRect: props.clientRect as any,
-                  appendTo: () => document.body,
-                  content: component.element,
-                  showOnCreate: true,
-                  interactive: true,
-                  trigger: 'manual',
-                  placement: 'bottom-start',
-                })
-              },
-
-              onUpdate: props => {
-                component.updateProps(props)
-
-                if (!props.clientRect) {
-                  return
-                }
-
-                popup[0].setProps({
-                  getReferenceClientRect: props.clientRect as any,
-                })
-              },
-
-              onKeyDown: props => {
-                if (props.event.key === 'Escape') {
-                  popup[0].hide()
-                  return true
-                }
-
-                return component.ref?.onKeyDown(props)
-              },
-
-              onExit: () => {
-                popup[0].destroy()
-                component.destroy()
-              },
-            }
-          },
-        },
-      }),
-    ],
-    content: value,
-    immediatelyRender: false,
-    onUpdate: ({ editor }) => {
-      onChange(editor.getHTML())
-    },
-    onFocus,
-    onBlur,
-    editorProps: {
-      attributes: {
-        class: cn(
-          'prose prose-sm max-w-none focus:outline-none min-h-[20px] text-inherit',
-          'rtl:text-right text-right'
-        ),
-        dir: 'rtl',
-      },
-    },
-  })
-
-  // Synchronize external value only if it's different from current editor content
-  useEffect(() => {
-    if (editor && value !== editor.getHTML()) {
-      editor.commands.setContent(value)
-    }
-  }, [value, editor])
-
-  if (!editor) {
-    return null
-  }
-
   const BubbleButton = ({ 
     onClick, 
     isActive = false, 
@@ -192,6 +73,8 @@ export function RichTextEditor({ value, onChange, onFocus, onBlur, className, st
     </button>
   )
 
+export function RichTextEditor({ value, onChange, onFocus, onBlur, className, style }: RichTextEditorProps) {
+
   return (
     <div 
       className={cn("relative w-full cursor-text", className)} 
@@ -206,13 +89,15 @@ export function RichTextEditor({ value, onChange, onFocus, onBlur, className, st
       {editor && (
         <BubbleMenu 
           editor={editor} 
-          tippyOptions={{ 
-            duration: 100,
-            animation: 'scale',
-            placement: 'top',
-            zIndex: 1000,
-            offset: [0, 10]
-          }}
+          {...({
+            tippyOptions: { 
+              duration: 100,
+              animation: 'scale',
+              placement: 'top',
+              zIndex: 1000,
+              offset: [0, 10]
+            }
+          } as any)}
           className="flex items-center gap-0.5 p-1 bg-white border border-slate-100 rounded-lg shadow-[0_8px_30px_rgb(0,0,0,0.06)] animate-in fade-in zoom-in duration-200"
         >
           <div className="flex items-center gap-0.5 border-l border-slate-100 ml-1 pl-1">

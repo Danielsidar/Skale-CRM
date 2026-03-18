@@ -144,7 +144,7 @@ export function DealsTable({
                           <MoreVertical className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end" className="text-right" dir="rtl">
+                      <DropdownMenuContent align="end" className="text-right">
                         <DropdownMenuItem 
                           className="cursor-pointer justify-end gap-2"
                           onClick={() => setEditingDeal(deal)}

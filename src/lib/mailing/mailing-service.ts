@@ -1,6 +1,6 @@
 import { SupabaseClient } from '@supabase/supabase-js';
-import { EmailPayload, MailingProvider } from '../types';
-import { GHLWebhookProvider } from './ghl-webhook';
+import { EmailPayload, MailingProvider } from './types';
+import { GHLWebhookProvider } from './providers/ghl-webhook';
 
 export class MailingService {
   private supabase: SupabaseClient;

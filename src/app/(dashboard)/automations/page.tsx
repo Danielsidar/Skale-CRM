@@ -538,7 +538,7 @@ export default function AutomationsListPage() {
                     </CardHeader>
                     <CardContent className="flex-1 pb-4 text-right">
                       <div className="text-xs text-muted-foreground mt-2">
-                        עודכן לאחרונה: {new Date(a.updated_at).toLocaleDateString("he-IL")}
+                        עודכן לאחרונה: {a.updated_at ? new Date(a.updated_at).toLocaleDateString("he-IL") : 'לא עודכן'}
                       </div>
                       {a.folder_id && (
                         <div className="mt-2">
@@ -659,7 +659,7 @@ export default function AutomationsListPage() {
                             {a.folder_id ? folders.find(f => f.id === a.folder_id)?.name : 'ללא תיקייה'}
                           </Badge>
                         </TableCell>
-                        <TableCell className="text-right">{new Date(a.updated_at).toLocaleDateString("he-IL")}</TableCell>
+                        <TableCell className="text-right">{a.updated_at ? new Date(a.updated_at).toLocaleDateString("he-IL") : 'לא עודכן'}</TableCell>
                         <TableCell className="text-left">
                           <div className="flex items-center justify-end gap-2">
                             <Button

@@ -109,12 +109,14 @@ export function PropertiesPanel() {
   }
 
   const handleContentChange = (updates: any) => {
+    if (!selectedBlockId) return;
     updateBlock(selectedBlockId, {
       content: { ...selectedBlock?.content, ...updates }
     })
   }
 
   const handleStyleChange = (updates: any) => {
+    if (!selectedBlockId) return;
     updateBlock(selectedBlockId, {
       styles: { ...selectedBlock?.styles, ...updates }
     })
@@ -160,26 +162,19 @@ export function PropertiesPanel() {
 }
 
 function BlockContentEditor({ type, content, onChange }: { type: string; content: any; onChange: (updates: any) => void }) {
-  const { setTextEditorOpen } = useEmailBuilderStore()
-
   switch (type) {
     case 'text':
       return (
         <div className="space-y-4">
           <div className="space-y-2">
             <Label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">עריכת תוכן</Label>
-            <Button 
-              onClick={() => setTextEditorOpen(true)}
-              className="w-full h-24 flex flex-col gap-2 rounded-2xl bg-primary/5 border-primary/20 text-primary hover:bg-primary/10 transition-all border-dashed"
-              variant="outline"
-            >
-              <Type className="h-6 w-6" />
-              <span className="font-bold">פתח עורך טקסט עשיר</span>
-            </Button>
             <div className="p-4 rounded-xl bg-muted/30 border border-border/50 max-h-40 overflow-hidden relative">
                <div className="text-[10px] text-muted-foreground font-mono leading-relaxed" dangerouslySetInnerHTML={{ __html: content.html }} />
                <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-muted/30 to-transparent" />
             </div>
+            <p className="text-[10px] text-muted-foreground italic mt-2">
+               * ערוך את הטקסט ישירות במשטח העבודה
+            </p>
           </div>
         </div>
       )
