@@ -2,7 +2,8 @@
 
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
-import { convertToCustomer, moveDealStage, triggerAutomationFlow } from "@/lib/services/crm"
+import { convertToCustomer, moveDealStage } from "@/lib/services/crm"
+import { useProductsQuery } from "@/lib/hooks/queries"
 import {
   Dialog,
   DialogContent,
@@ -34,7 +35,6 @@ interface CloseDealWonDialogProps {
   onOpenChange: (open: boolean) => void
   deal: Deal | null
   businessId: string
-  pipelineId: string
   wonStageId: string
   onSuccess: () => void
   onCancel: () => void
@@ -45,34 +45,26 @@ export function CloseDealWonDialog({
   onOpenChange,
   deal,
   businessId,
-  pipelineId,
   wonStageId,
   onSuccess,
   onCancel,
 }: CloseDealWonDialogProps) {
   const [loading, setLoading] = useState(false)
-  const [products, setProducts] = useState<Product[]>([])
   const [productId, setProductId] = useState<string>("none")
   const [price, setPrice] = useState("")
   const [notes, setNotes] = useState("")
   
   const supabase = createClient()
+  // Use cached products query instead of fetching on every dialog open
+  const { data: productsData } = useProductsQuery(businessId)
+  const products = (productsData ?? []) as Product[]
 
   useEffect(() => {
-    if (open && businessId) {
-      supabase
-        .from("products")
-        .select("*")
-        .eq("business_id", businessId)
-        .order("name")
-        .then(({ data }) => setProducts(data || []))
-      
-      if (deal) {
-        setPrice(String(deal.value || ""))
-        setProductId(deal.product_id || "none")
-      }
+    if (open && deal) {
+      setPrice(String(deal.value || ""))
+      setProductId(deal.product_id || "none")
     }
-  }, [open, businessId, deal])
+  }, [open, deal])
 
   const handleProductChange = (id: string) => {
     setProductId(id)
@@ -116,13 +108,7 @@ export function CloseDealWonDialog({
 
       if (!moveRes.ok) throw new Error(moveRes.error)
 
-      triggerAutomationFlow({
-        businessId,
-        triggerSubtype: "deal.won",
-        entityType: "deal",
-        entityId: deal.id,
-        payload: { pipeline_id: pipelineId },
-      })
+      // lead.won נורה מתוך moveDealStage כשהשלב הוא is_won — לא צריך deal.won (לא קיים במנוע החדש)
       toast.success("מזל טוב! העיסקה נסגרה והלקוח עודכן 🎉")
       onOpenChange(false)
       onSuccess()

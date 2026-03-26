@@ -16,14 +16,18 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
-import { Plus, Loader2 } from "lucide-react"
+import { Plus, Loader2, Lock } from "lucide-react"
 
 export function CreateContactDialog({
   onSuccess,
   trigger,
+  currentCount = 0,
+  maxCount = null,
 }: {
   onSuccess?: () => void
   trigger?: React.ReactNode
+  currentCount?: number
+  maxCount?: number | null
 }) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -56,6 +60,23 @@ export function CreateContactDialog({
     } finally {
       setLoading(false)
     }
+  }
+
+  const atLimit = maxCount !== null && currentCount >= maxCount
+
+  if (atLimit) {
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="gap-2 opacity-60 cursor-not-allowed"
+        disabled
+        title={`הגעת למגבלת המסלול שלך: ${maxCount} אנשי קשר`}
+      >
+        <Lock className="h-4 w-4" />
+        {trigger ? null : "איש קשר חדש"}
+      </Button>
+    )
   }
 
   return (

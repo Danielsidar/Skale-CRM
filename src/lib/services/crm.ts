@@ -5,30 +5,67 @@ const SUPABASE_URL =
 const SUPABASE_ANON_KEY =
   typeof process !== "undefined" ? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY : ""
 
-/** Fire-and-forget: invoke the automation-engine Edge Function for the new flow builder. */
-export function triggerAutomationFlow(params: {
+/** Prefer service role on the server (API routes, server actions) so Edge accepts the JWT; anon on the client. */
+function automationInvokeBearer(): string | null {
+  if (typeof process === "undefined") return SUPABASE_ANON_KEY || null
+  return (
+    process.env.SUPABASE_SERVICE_ROLE_KEY ||
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+    null
+  )
+}
+
+/**
+ * Invoke automation-engine. Always await from server code (API routes, server actions):
+ * fire-and-forget fetch is often cut off when the handler returns (serverless freeze).
+ */
+export async function triggerAutomationFlow(params: {
   businessId: string
   triggerSubtype: string
   entityType: string
   entityId: string
   payload?: Record<string, unknown>
-}): void {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return
+}): Promise<void> {
+  const bearer = automationInvokeBearer()
+  if (!SUPABASE_URL || !bearer) {
+    console.warn(
+      "[triggerAutomationFlow] Missing NEXT_PUBLIC_SUPABASE_URL and a JWT — set SUPABASE_SERVICE_ROLE_KEY (server) or NEXT_PUBLIC_SUPABASE_ANON_KEY — automations will not run."
+    )
+    return
+  }
   const url = `${SUPABASE_URL}/functions/v1/automation-engine`
-  fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-    },
-    body: JSON.stringify({
-      business_id: params.businessId,
-      trigger_subtype: params.triggerSubtype,
+  const body = {
+    business_id: params.businessId,
+    trigger_subtype: params.triggerSubtype,
+    entity_type: params.entityType,
+    entity_id: params.entityId,
+    payload: params.payload ?? {},
+  }
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${bearer}`,
+      },
+      body: JSON.stringify(body),
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => "")
+      console.error(
+        "[triggerAutomationFlow] automation-engine error",
+        res.status,
+        text.slice(0, 800),
+        { trigger: params.triggerSubtype, entity_type: params.entityType, entity_id: params.entityId }
+      )
+    }
+  } catch (err) {
+    console.error("[triggerAutomationFlow] network error", err, {
+      trigger: params.triggerSubtype,
       entity_type: params.entityType,
       entity_id: params.entityId,
-      payload: params.payload ?? {},
-    }),
-  }).catch(() => {})
+    })
+  }
 }
 
 export interface CreateDealInput {
@@ -44,6 +81,7 @@ export interface CreateDealInput {
   currency?: string
   source?: string | null
   tags?: string[]
+  created_at?: string | null
 }
 
 export interface CreateContactInput {
@@ -55,6 +93,7 @@ export interface CreateContactInput {
   tags?: string[]
   source?: string | null
   owner_user_id?: string | null
+  created_at?: string | null
 }
 
 export type ActivityType = "note" | "call" | "meeting" | "task" | "message" | "email"
@@ -70,6 +109,7 @@ export interface LogActivityInput {
   due_date?: string | null
   task_status?: "open" | "done"
   assignee_user_id?: string | null
+  created_at?: string | null
 }
 
 /**
@@ -98,21 +138,19 @@ export async function moveDealStage(
   }
   const result = data as { ok: boolean; deal_id?: string; stage_id?: string; old_stage_id?: string; error?: string }
   if (result.ok && result.deal_id && result.stage_id && params.businessId) {
-    // Fetch stage names for the activity log
-    const { data: stages } = await supabase
-      .from("stages")
-      .select("id, name")
-      .in("id", [result.stage_id, result.old_stage_id].filter(Boolean) as string[])
+    // Fetch stage info, deal info (contact + pipeline) all in parallel
+    const stageIds = [result.stage_id, result.old_stage_id].filter(Boolean) as string[]
+    const [stagesResult, dealResult] = await Promise.all([
+      supabase.from("stages").select("id, name, is_won, is_lost").in("id", stageIds),
+      supabase.from("deals").select("contact_id, title, pipeline_id").eq("id", result.deal_id).single(),
+    ])
 
-    const oldStage = stages?.find(s => s.id === result.old_stage_id)?.name
-    const newStage = stages?.find(s => s.id === result.stage_id)?.name
-
-    // Log activity if we have a contact_id
-    const { data: deal } = await supabase
-      .from("deals")
-      .select("contact_id, title")
-      .eq("id", result.deal_id)
-      .single()
+    const stages = stagesResult.data ?? []
+    const deal = dealResult.data
+    const oldStage = stages.find(s => s.id === result.old_stage_id)?.name
+    const newStage = stages.find(s => s.id === result.stage_id)?.name
+    const stageInfo = stages.find(s => s.id === result.stage_id)
+    const pipelineId = deal?.pipeline_id ?? null
 
     if (deal?.contact_id) {
       await supabase.from("activities").insert({
@@ -130,24 +168,103 @@ export async function moveDealStage(
       })
     }
 
-    triggerAutomationFlow({
-      businessId: params.businessId,
-      triggerSubtype: "deal.stage_changed",
-      entityType: "deal",
-      entityId: result.deal_id,
-      payload: { stage_id: result.stage_id, old_stage_id: result.old_stage_id },
-    })
+    const automationCalls: Promise<void>[] = [
+      triggerAutomationFlow({
+        businessId: params.businessId,
+        triggerSubtype: "lead.stage_entered",
+        entityType: "deal",
+        entityId: result.deal_id,
+        payload: {
+          stage_id: result.stage_id,
+          old_stage_id: result.old_stage_id,
+          pipeline_id: pipelineId,
+        },
+      }),
+    ]
+    if (stageInfo?.is_won) {
+      automationCalls.push(
+        triggerAutomationFlow({
+          businessId: params.businessId,
+          triggerSubtype: "lead.won",
+          entityType: "deal",
+          entityId: result.deal_id,
+          payload: { stage_id: result.stage_id, pipeline_id: pipelineId },
+        })
+      )
+    } else if (stageInfo?.is_lost) {
+      automationCalls.push(
+        triggerAutomationFlow({
+          businessId: params.businessId,
+          triggerSubtype: "lead.lost",
+          entityType: "deal",
+          entityId: result.deal_id,
+          payload: { stage_id: result.stage_id, pipeline_id: pipelineId },
+        })
+      )
+    }
+    await Promise.all(automationCalls)
   }
   return result
 }
 
 /**
  * Create a new deal. Stage must belong to the given pipeline.
+ * If a contact_id is provided, checks if there's already an active deal in the same pipeline.
+ * An active deal is one whose stage is neither won nor lost.
+ * If active deal exists, updates it instead of creating a new one.
  */
 export async function createDeal(
   supabase: SupabaseClient,
-  input: CreateDealInput
-): Promise<{ data?: { id: string }; error?: string }> {
+  input: CreateDealInput & { created_at?: string }
+): Promise<{ data?: { id: string; is_duplicate?: boolean }; error?: string }> {
+  // 1. If contact_id is provided, check for active deals in the same pipeline
+  if (input.contact_id) {
+    const { data: existingDeals } = await supabase
+      .from("deals")
+      .select(`
+        id,
+        stage:stages!inner(is_won, is_lost)
+      `)
+      .eq("contact_id", input.contact_id)
+      .eq("pipeline_id", input.pipeline_id)
+      .eq("stages.is_won", false)
+      .eq("stages.is_lost", false)
+      .limit(1)
+
+    if (existingDeals && existingDeals.length > 0) {
+      const existingDeal = existingDeals[0] as any
+      const dealId = existingDeal.id
+
+      // 2. Update the existing deal with new info (value, title, tags)
+      const { error: updateError } = await supabase
+        .from("deals")
+        .update({
+          value: input.value ?? undefined,
+          title: input.title,
+          tags: input.tags ?? undefined,
+          source: input.source ?? undefined,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", dealId)
+
+      if (updateError) return { error: updateError.message }
+
+      // 3. Log an activity that the lead was "merged"
+      await supabase.from("activities").insert({
+        business_id: input.business_id,
+        type: "note",
+        contact_id: input.contact_id,
+        deal_id: dealId,
+        created_by_user_id: input.owner_user_id || "",
+        content: `🔄 הלקוח השאיר פרטים שוב ב-Pipeline זה. המידע בתיק העסקה עודכן.`,
+        metadata: { event: "duplicate_lead_merged", original_input: input }
+      })
+
+      return { data: { id: dealId, is_duplicate: true } }
+    }
+  }
+
+  // 4. No active deal found, proceed with insertion
   const { data, error } = await supabase
     .from("deals")
     .insert({
@@ -163,19 +280,33 @@ export async function createDeal(
       currency: input.currency ?? "USD",
       source: input.source ?? null,
       tags: input.tags ?? [],
+      ...(input.created_at ? { created_at: input.created_at } : {}),
     })
     .select("id")
     .single()
 
   if (error) return { error: error.message }
   const id = (data as { id: string }).id
-  triggerAutomationFlow({
-    businessId: input.business_id,
-    triggerSubtype: "deal.created",
-    entityType: "deal",
-    entityId: id,
-    payload: { pipeline_id: input.pipeline_id, stage_id: input.stage_id },
-  })
+  await Promise.all([
+    triggerAutomationFlow({
+      businessId: input.business_id,
+      triggerSubtype: "lead.created",
+      entityType: "deal",
+      entityId: id,
+      payload: { pipeline_id: input.pipeline_id, stage_id: input.stage_id },
+    }),
+    triggerAutomationFlow({
+      businessId: input.business_id,
+      triggerSubtype: "lead.stage_entered",
+      entityType: "deal",
+      entityId: id,
+      payload: {
+        pipeline_id: input.pipeline_id,
+        stage_id: input.stage_id,
+        old_stage_id: null,
+      },
+    }),
+  ])
   return { data: { id } }
 }
 
@@ -242,13 +373,14 @@ export async function createContact(
       tags: input.tags ?? [],
       source: input.source ?? null,
       owner_user_id: input.owner_user_id ?? null,
+      ...(input.created_at ? { created_at: input.created_at } : {}),
     })
     .select("id")
     .single()
 
   if (error) return { error: error.message }
   const id = (data as { id: string }).id
-  triggerAutomationFlow({
+  await triggerAutomationFlow({
     businessId: input.business_id,
     triggerSubtype: "contact.created",
     entityType: "contact",
@@ -410,6 +542,7 @@ export async function logActivity(
       due_date: input.due_date ?? null,
       task_status: input.task_status ?? "open",
       assignee_user_id: input.assignee_user_id ?? null,
+      ...(input.created_at ? { created_at: input.created_at } : {}),
     })
     .select("id")
     .single()
@@ -417,7 +550,7 @@ export async function logActivity(
   if (error) return { error: error.message }
   const id = (data as { id: string }).id
   if (input.type === "task") {
-    triggerAutomationFlow({
+    await triggerAutomationFlow({
       businessId: input.business_id,
       triggerSubtype: "task.created",
       entityType: "activity",

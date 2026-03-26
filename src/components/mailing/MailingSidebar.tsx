@@ -9,6 +9,7 @@ import {
   Mail, 
   Send, 
   Users, 
+  Contact,
   Settings, 
   LogOut,
   PanelLeftClose,
@@ -32,6 +33,7 @@ const mailingMenuItems = [
   { name: "שליחת קמפיין", href: "/mailing/send", icon: Send },
   { name: "קמפיינים", href: "/mailing/campaigns", icon: History },
   { name: "רשימות תפוצה", href: "/mailing/lists", icon: Users },
+  { name: "אנשי קשר", href: "/mailing/contacts", icon: Contact },
   { name: "תבניות מייל", href: "/mailing/templates", icon: Layout },
   { name: "הגדרות", href: "/mailing/settings", icon: Settings },
 ]

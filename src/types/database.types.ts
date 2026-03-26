@@ -408,6 +408,7 @@ export type Database = {
           updated_at: string | null
           version: number
           folder_id: string | null
+          is_simple: boolean
         }
         Insert: {
           business_id: string
@@ -418,6 +419,7 @@ export type Database = {
           updated_at?: string | null
           version?: number
           folder_id?: string | null
+          is_simple?: boolean
         }
         Update: {
           business_id?: string
@@ -428,6 +430,7 @@ export type Database = {
           updated_at?: string | null
           version?: number
           folder_id?: string | null
+          is_simple?: boolean
         }
         Relationships: [
           {

@@ -9,7 +9,7 @@ import {
   Calendar,
   Kanban, 
   Target,
-  Users, 
+  Users,
   UserCheck,
   Package,
   Settings, 
@@ -32,17 +32,27 @@ import {
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
 import { useState, useEffect } from "react"
+import { useTierFeatures } from "@/lib/hooks/useTierFeatures"
+import type { TierFeatures } from "@/lib/tiers"
 
-const menuItems = [
+const menuItems: {
+  name: string
+  href: string
+  icon: React.ElementType
+  permission: string
+  target?: string
+  tierFeature?: keyof TierFeatures
+}[] = [
   { name: "סקירה", href: "/dashboard", icon: LayoutDashboard, permission: "view_dashboard" },
-  { name: "יומן פגישות", href: "/calendar", icon: Calendar, permission: "view_dashboard" },
+  { name: "יומן פגישות", href: "/calendar", icon: Calendar, permission: "view_dashboard", tierFeature: "booking" },
   { name: "לידים", href: "/leads", icon: Target, permission: "view_leads" },
-  { name: "אוטומציות", href: "/automations", icon: Zap, permission: "view_automations" },
-  { name: "מערכת דיוור", href: "/mailing", icon: Mail, target: "_blank", permission: "view_mailing" },
+  { name: "פייפליינים", href: "/pipelines", icon: Kanban, permission: "view_leads" },
+  { name: "אוטומציות", href: "/automations", icon: Zap, permission: "view_automations", tierFeature: "automations" },
+  { name: "מערכת דיוור", href: "/mailing", icon: Mail, target: "_blank", permission: "view_mailing", tierFeature: "mailing" },
   { name: "לקוחות", href: "/customers", icon: UserCheck, permission: "view_contacts" },
-  { name: "מוצרים", href: "/products", icon: Package, permission: "view_settings" },
   { name: "אנשי קשר", href: "/contacts", icon: Users, permission: "view_contacts" },
-  { name: "API", href: "/api", icon: FileCode, permission: "view_settings" },
+  { name: "מוצרים", href: "/products", icon: Package, permission: "view_settings" },
+  { name: "API", href: "/api", icon: FileCode, permission: "view_settings", tierFeature: "api_access" },
   { name: "הגדרות", href: "/settings", icon: Settings, permission: "view_settings" },
 ]
 
@@ -51,6 +61,7 @@ export function Sidebar() {
   const router = useRouter()
   const supabase = createClient()
   const { isCollapsed, toggleSidebar } = useSidebarStore()
+  const { features, loading: featuresLoading } = useTierFeatures()
   const [allowedPages, setAllowedPages] = useState<Set<string>>(new Set())
   const [isAdmin, setIsAdmin] = useState(false)
   const [loading, setLoading] = useState(true)
@@ -60,7 +71,6 @@ export function Sidebar() {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) return
 
-      // Get user role
       const { data: bizUser } = await supabase
         .from("business_users")
         .select("role, business_id")
@@ -75,7 +85,6 @@ export function Sidebar() {
         return
       }
 
-      // Get page permissions
       const { data: perms } = await supabase
         .from("business_permissions")
         .select("action")
@@ -99,9 +108,11 @@ export function Sidebar() {
     router.refresh()
   }
 
-  const filteredMenuItems = menuItems.filter(item => 
-    isAdmin || allowedPages.has(item.permission)
-  )
+  const filteredMenuItems = menuItems.filter(item => {
+    if (!isAdmin && !allowedPages.has(item.permission)) return false
+    if (item.tierFeature && features[item.tierFeature] === false) return false
+    return true
+  })
 
   return (
     <aside
@@ -135,7 +146,7 @@ export function Sidebar() {
         {/* Navigation */}
         <TooltipProvider delayDuration={100}>
           <nav className="flex-1 space-y-1">
-            {!loading && filteredMenuItems.map((item) => {
+            {!loading && !featuresLoading && filteredMenuItems.map((item) => {
               const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
               return (
                 <Tooltip key={item.href}>
@@ -180,7 +191,7 @@ export function Sidebar() {
                 </Tooltip>
               )
             })}
-            {loading && (
+            {(loading || featuresLoading) && (
               <div className="flex justify-center py-4">
                 <Loader2 className="h-5 w-5 animate-spin text-slate-500" />
               </div>

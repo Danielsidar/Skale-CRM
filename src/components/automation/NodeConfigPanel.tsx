@@ -16,16 +16,149 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { VariableInput } from "./VariableInput"
 import type { AutomationNodeData } from "@/types/automation"
-import { TRIGGER_SUBTYPES, TRIGGER_LABELS, ACTION_LABELS, ACTION_SUBTYPES } from "@/types/automation"
-import { Plus, Trash2, Mail, Tag, Clock, Edit, Webhook, ListPlus, Zap, GitBranch, Play, Check, MessageSquare } from "lucide-react"
+import {
+  TRIGGER_SUBTYPES,
+  TRIGGER_LABELS,
+  ACTION_LABELS,
+  ACTION_SUBTYPES,
+  LEAD_FIELDS,
+  CONTACT_FIELDS,
+} from "@/types/automation"
+import { Plus, Trash2, Webhook, GitBranch, Play, MessageSquare } from "lucide-react"
 import { cn } from "@/lib/utils"
-import { Checkbox } from "@/components/ui/checkbox"
 
 interface WhatsappCredential {
   id: string
   name: string
   provider: "official" | "green_api"
 }
+
+// ─── Trigger configs ──────────────────────────────────────────────────────────
+
+function StageEnteredTriggerConfig({
+  config,
+  updateData,
+  pipelines,
+  stages,
+}: {
+  config: Record<string, unknown>
+  updateData: (u: Partial<AutomationNodeData["config"]>) => void
+  pipelines: PipelineOption[]
+  stages: StageOption[]
+}) {
+  const selectedPipelineId = (config?.pipeline_id as string) ?? ""
+  const selectedStageId = (config?.stage_id as string) ?? ""
+  const filteredStages = selectedPipelineId ? stages.filter((s) => s.pipeline_id === selectedPipelineId) : []
+
+  return (
+    <div className="space-y-4" dir="rtl">
+      <div className="space-y-2">
+        <Label className="block text-right">פייפליין</Label>
+        <Select dir="rtl" value={selectedPipelineId} onValueChange={(v) => updateData({ pipeline_id: v, stage_id: "" })}>
+          <SelectTrigger className="w-full bg-white">
+            <SelectValue placeholder="כל הפייפליינים" />
+          </SelectTrigger>
+          <SelectContent dir="rtl">
+            {pipelines.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label className="block text-right">סטייג'</Label>
+        <Select dir="rtl" value={selectedStageId} onValueChange={(v) => updateData({ stage_id: v })} disabled={!selectedPipelineId}>
+          <SelectTrigger className="w-full bg-white">
+            <SelectValue placeholder={selectedPipelineId ? "בחר סטייג'..." : "בחר פייפליין תחילה"} />
+          </SelectTrigger>
+          <SelectContent dir="rtl">
+            <SelectItem value="_any">כל סטייג'</SelectItem>
+            {filteredStages.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <p className="text-[10px] text-muted-foreground">האוטומציה תופעל כאשר ליד נכנס לסטייג' הנבחר.</p>
+    </div>
+  )
+}
+
+function LeadCreatedTriggerConfig({
+  config,
+  updateData,
+  pipelines,
+}: {
+  config: Record<string, unknown>
+  updateData: (u: Partial<AutomationNodeData["config"]>) => void
+  pipelines: PipelineOption[]
+}) {
+  return (
+    <div className="space-y-4" dir="rtl">
+      <div className="space-y-2">
+        <Label className="block text-right">פייפליין (אופציונלי)</Label>
+        <Select dir="rtl" value={(config?.pipeline_id as string) ?? ""} onValueChange={(v) => updateData({ pipeline_id: v === "_any" ? "" : v })}>
+          <SelectTrigger className="w-full bg-white">
+            <SelectValue placeholder="כל הפייפליינים" />
+          </SelectTrigger>
+          <SelectContent dir="rtl">
+            <SelectItem value="_any">כל הפייפליינים</SelectItem>
+            {pipelines.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <p className="text-[10px] text-muted-foreground">האוטומציה תופעל בכל פעם שנוצר ליד חדש (בפייפליין הנבחר).</p>
+    </div>
+  )
+}
+
+function LeadWonLostTriggerConfig({
+  config,
+  updateData,
+  pipelines,
+}: {
+  config: Record<string, unknown>
+  updateData: (u: Partial<AutomationNodeData["config"]>) => void
+  pipelines: PipelineOption[]
+}) {
+  return (
+    <div className="space-y-4" dir="rtl">
+      <div className="space-y-2">
+        <Label className="block text-right">פייפליין (אופציונלי)</Label>
+        <Select dir="rtl" value={(config?.pipeline_id as string) ?? ""} onValueChange={(v) => updateData({ pipeline_id: v === "_any" ? "" : v })}>
+          <SelectTrigger className="w-full bg-white">
+            <SelectValue placeholder="כל הפייפליינים" />
+          </SelectTrigger>
+          <SelectContent dir="rtl">
+            <SelectItem value="_any">כל הפייפליינים</SelectItem>
+            {pipelines.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+    </div>
+  )
+}
+
+function ContactTagTriggerConfig({
+  config,
+  updateData,
+}: {
+  config: Record<string, unknown>
+  updateData: (u: Partial<AutomationNodeData["config"]>) => void
+}) {
+  return (
+    <div className="space-y-4" dir="rtl">
+      <div className="space-y-2">
+        <Label className="block text-right">שם התגית (אופציונלי)</Label>
+        <Input
+          value={(config?.tag as string) ?? ""}
+          onChange={(e) => updateData({ tag: e.target.value })}
+          placeholder='כל תגית, או כתוב שם ספציפי...'
+          className="text-right"
+        />
+      </div>
+      <p className="text-[10px] text-muted-foreground">תשאיר ריק כדי להפעיל על כל הוספת תגית.</p>
+    </div>
+  )
+}
+
+// ─── Action configs ───────────────────────────────────────────────────────────
 
 function WhatsappConfig({
   config,
@@ -38,13 +171,12 @@ function WhatsappConfig({
 }) {
   return (
     <div className="space-y-4" dir="rtl">
+      <div className="p-3 rounded-lg bg-green-50 border border-green-100 text-xs text-green-800">
+        ההודעה תישלח לטלפון של <strong>איש הקשר</strong> המקושר לליד.
+      </div>
       <div className="space-y-2">
-        <Label className="block text-right">בחר חיבור וואטסאפ</Label>
-        <Select
-          dir="rtl"
-          value={(config?.credential_id as string) ?? ""}
-          onValueChange={(v) => updateData({ credential_id: v })}
-        >
+        <Label className="block text-right">חיבור וואטסאפ</Label>
+        <Select dir="rtl" value={(config?.credential_id as string) ?? ""} onValueChange={(v) => updateData({ credential_id: v })}>
           <SelectTrigger className="w-full bg-white">
             <SelectValue placeholder="בחר חיבור..." />
           </SelectTrigger>
@@ -57,7 +189,6 @@ function WhatsappConfig({
           </SelectContent>
         </Select>
       </div>
-
       <div className="space-y-2">
         <Label className="block text-right">הודעה (הקלד @ למשתנים)</Label>
         <VariableInput
@@ -66,6 +197,105 @@ function WhatsappConfig({
           placeholder="הקלד את ההודעה כאן..."
           multiline
           className="min-h-[120px] text-right"
+        />
+      </div>
+    </div>
+  )
+}
+
+function TagConfig({
+  config,
+  updateData,
+  description,
+}: {
+  config: Record<string, unknown>
+  updateData: (u: Partial<AutomationNodeData["config"]>) => void
+  description: string
+}) {
+  return (
+    <div className="space-y-4" dir="rtl">
+      <div className="p-3 rounded-lg bg-emerald-50 border border-emerald-100 text-xs text-emerald-800">
+        {description}
+      </div>
+      <div className="space-y-2">
+        <Label className="block text-right">שם התגית</Label>
+        <Input
+          value={(config?.tag as string) ?? ""}
+          onChange={(e) => updateData({ tag: e.target.value })}
+          placeholder="למשל: VIP"
+          className="text-right"
+        />
+      </div>
+    </div>
+  )
+}
+
+function UpdateLeadFieldConfig({
+  config,
+  updateData,
+}: {
+  config: Record<string, unknown>
+  updateData: (u: Partial<AutomationNodeData["config"]>) => void
+}) {
+  return (
+    <div className="space-y-4" dir="rtl">
+      <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-xs text-blue-800">
+        מעדכן שדה של <strong>הליד</strong> שהפעיל את האוטומציה.
+      </div>
+      <div className="space-y-2">
+        <Label className="block text-right">שדה לעדכון</Label>
+        <Select dir="rtl" value={(config?.field_key as string) ?? ""} onValueChange={(v) => updateData({ field_key: v })}>
+          <SelectTrigger className="w-full bg-white">
+            <SelectValue placeholder="בחר שדה..." />
+          </SelectTrigger>
+          <SelectContent dir="rtl">
+            {LEAD_FIELDS.map((f) => <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label className="block text-right">ערך חדש (הקלד @ למשתנים)</Label>
+        <VariableInput
+          value={(config?.field_value as string) ?? ""}
+          onChange={(v) => updateData({ field_value: v })}
+          placeholder="ערך חדש..."
+          multiline={false}
+        />
+      </div>
+    </div>
+  )
+}
+
+function UpdateContactFieldConfig({
+  config,
+  updateData,
+}: {
+  config: Record<string, unknown>
+  updateData: (u: Partial<AutomationNodeData["config"]>) => void
+}) {
+  return (
+    <div className="space-y-4" dir="rtl">
+      <div className="p-3 rounded-lg bg-purple-50 border border-purple-100 text-xs text-purple-800">
+        מעדכן שדה של <strong>איש הקשר</strong> המקושר לליד.
+      </div>
+      <div className="space-y-2">
+        <Label className="block text-right">שדה לעדכון</Label>
+        <Select dir="rtl" value={(config?.field_key as string) ?? ""} onValueChange={(v) => updateData({ field_key: v })}>
+          <SelectTrigger className="w-full bg-white">
+            <SelectValue placeholder="בחר שדה..." />
+          </SelectTrigger>
+          <SelectContent dir="rtl">
+            {CONTACT_FIELDS.map((f) => <SelectItem key={f.key} value={f.key}>{f.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label className="block text-right">ערך חדש (הקלד @ למשתנים)</Label>
+        <VariableInput
+          value={(config?.field_value as string) ?? ""}
+          onChange={(v) => updateData({ field_value: v })}
+          placeholder="ערך חדש..."
+          multiline={false}
         />
       </div>
     </div>
@@ -86,21 +316,16 @@ function DelayConfig({
           <Label className="block text-right">זמן</Label>
           <Input
             type="number"
+            min={1}
             value={(config?.delay_value as number) ?? 1}
-            onChange={(e) => updateData({ delay_value: parseInt(e.target.value) || 0 })}
+            onChange={(e) => updateData({ delay_value: parseInt(e.target.value) || 1 })}
             className="text-right"
           />
         </div>
         <div className="space-y-2">
           <Label className="block text-right">יחידות</Label>
-          <Select
-            dir="rtl"
-            value={(config?.delay_unit as string) ?? "minutes"}
-            onValueChange={(v) => updateData({ delay_unit: v })}
-          >
-            <SelectTrigger>
-              <SelectValue />
-            </SelectTrigger>
+          <Select dir="rtl" value={(config?.delay_unit as string) ?? "minutes"} onValueChange={(v) => updateData({ delay_unit: v })}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent dir="rtl">
               <SelectItem value="minutes">דקות</SelectItem>
               <SelectItem value="hours">שעות</SelectItem>
@@ -113,56 +338,46 @@ function DelayConfig({
   )
 }
 
-function TagConfig({
+function MoveToStageActionConfig({
   config,
   updateData,
-  label = "תגית",
+  pipelines,
+  stages,
 }: {
   config: Record<string, unknown>
   updateData: (u: Partial<AutomationNodeData["config"]>) => void
-  label?: string
+  pipelines: PipelineOption[]
+  stages: StageOption[]
 }) {
-  return (
-    <div className="space-y-4" dir="rtl">
-      <div className="space-y-2">
-        <Label className="block text-right">{label}</Label>
-        <Input
-          value={(config?.tag as string) ?? ""}
-          onChange={(e) => updateData({ tag: e.target.value })}
-          placeholder="למשל: לקוח_חדש"
-          className="text-right"
-        />
-      </div>
-    </div>
-  )
-}
+  const selectedPipelineId = (config?.pipeline_id as string) ?? ""
+  const filteredStages = selectedPipelineId ? stages.filter((s) => s.pipeline_id === selectedPipelineId) : []
 
-function FieldUpdateConfig({
-  config,
-  updateData,
-}: {
-  config: Record<string, unknown>
-  updateData: (u: Partial<AutomationNodeData["config"]>) => void
-}) {
   return (
     <div className="space-y-4" dir="rtl">
-      <div className="space-y-2">
-        <Label className="block text-right">שדה לעדכון</Label>
-        <Input
-          value={(config?.field_name as string) ?? ""}
-          onChange={(e) => updateData({ field_name: e.target.value })}
-          placeholder="למשל: phone"
-          className="text-right"
-        />
+      <div className="p-3 rounded-lg bg-blue-50 border border-blue-100 text-xs text-blue-800">
+        הליד יועבר לסטייג' הנבחר. אם הסטייג' בפייפליין אחר — הליד יועבר לשם.
       </div>
       <div className="space-y-2">
-        <Label className="block text-right">ערך חדש (הקלד @ למשתנים)</Label>
-        <VariableInput
-          value={(config?.field_value as string) ?? ""}
-          onChange={(v) => updateData({ field_value: v })}
-          placeholder="ערך חדש..."
-          multiline={false}
-        />
+        <Label className="block text-right">פייפליין</Label>
+        <Select dir="rtl" value={selectedPipelineId} onValueChange={(v) => updateData({ pipeline_id: v, stage_id: "" })}>
+          <SelectTrigger className="w-full bg-white">
+            <SelectValue placeholder="בחר פייפליין..." />
+          </SelectTrigger>
+          <SelectContent dir="rtl">
+            {pipelines.map((p) => <SelectItem key={p.id} value={p.id}>{p.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
+      <div className="space-y-2">
+        <Label className="block text-right">סטייג' יעד</Label>
+        <Select dir="rtl" value={(config?.stage_id as string) ?? ""} onValueChange={(v) => updateData({ stage_id: v })} disabled={!selectedPipelineId}>
+          <SelectTrigger className="w-full bg-white">
+            <SelectValue placeholder={selectedPipelineId ? "בחר סטייג'..." : "בחר פייפליין תחילה"} />
+          </SelectTrigger>
+          <SelectContent dir="rtl">
+            {filteredStages.map((s) => <SelectItem key={s.id} value={s.id}>{s.name}</SelectItem>)}
+          </SelectContent>
+        </Select>
       </div>
     </div>
   )
@@ -178,7 +393,7 @@ function ConditionTagConfig({
   return (
     <div className="space-y-4" dir="rtl">
       <div className="space-y-2">
-        <Label className="block text-right">בדוק תגית</Label>
+        <Label className="block text-right">בדוק תגית של איש הקשר</Label>
         <Input
           value={(config?.tag as string) ?? ""}
           onChange={(e) => updateData({ tag: e.target.value })}
@@ -188,76 +403,13 @@ function ConditionTagConfig({
       </div>
       <div className="space-y-2">
         <Label className="block text-right">התנאי</Label>
-        <Select
-          dir="rtl"
-          value={(config?.operator as string) ?? "has_tag"}
-          onValueChange={(v) => updateData({ operator: v })}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
+        <Select dir="rtl" value={(config?.operator as string) ?? "has_tag"} onValueChange={(v) => updateData({ operator: v })}>
+          <SelectTrigger><SelectValue /></SelectTrigger>
           <SelectContent dir="rtl">
             <SelectItem value="has_tag">קיימת אצל איש הקשר</SelectItem>
             <SelectItem value="no_tag">לא קיימת אצל איש הקשר</SelectItem>
           </SelectContent>
         </Select>
-      </div>
-    </div>
-  )
-}
-
-function PipelineSelectionConfig({
-  config,
-  updateData,
-  pipelines,
-}: {
-  config: Record<string, unknown>
-  updateData: (u: Partial<AutomationNodeData["config"]>) => void
-  pipelines: PipelineOption[]
-}) {
-  const selectedPipelines = (config?.pipeline_ids as string[]) ?? []
-
-  const togglePipeline = (pipelineId: string) => {
-    const next = selectedPipelines.includes(pipelineId)
-      ? selectedPipelines.filter((id) => id !== pipelineId)
-      : [...selectedPipelines, pipelineId]
-    updateData({ pipeline_ids: next })
-  }
-
-  return (
-    <div className="space-y-4" dir="rtl">
-      <div className="space-y-2">
-        <Label className="block text-right">בחר פייפליינים</Label>
-        <div className="flex flex-col gap-2 p-3 border rounded-lg bg-slate-50/50 max-h-[200px] overflow-y-auto">
-          {pipelines.length === 0 ? (
-            <p className="text-xs text-muted-foreground text-center py-4">לא נמצאו פייפליינים</p>
-          ) : (
-            pipelines.map((p) => (
-              <div key={p.id} className="flex items-center gap-3">
-                <Checkbox
-                  id={`pipeline-${p.id}`}
-                  checked={selectedPipelines.includes(p.id)}
-                  onCheckedChange={() => togglePipeline(p.id)}
-                />
-                <Label
-                  htmlFor={`pipeline-${p.id}`}
-                  className="text-sm font-medium cursor-pointer flex-1"
-                >
-                  {p.name}
-                </Label>
-              </div>
-            ))
-          )}
-        </div>
-        {selectedPipelines.length > 0 ? (
-          <p className="text-[10px] text-muted-foreground mt-1">
-            נבחרו {selectedPipelines.length} פייפליינים. האוטומציה תופעל עבור לידים חדשים בהם.
-          </p>
-        ) : (
-          <p className="text-[10px] text-muted-foreground mt-1">
-            אם לא נבחר אף פייפליין, האוטומציה תופעל עבור כל ליד חדש בכל פייפליין.
-          </p>
-        )}
       </div>
     </div>
   )
@@ -271,9 +423,7 @@ function parseBodyFields(template: string): { name: string; value: string }[] {
         name,
         value: typeof value === "string" ? value : JSON.stringify(value ?? ""),
       }))
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
   return []
 }
 
@@ -291,9 +441,7 @@ function WebhookConfig({
   const syncFieldsToTemplate = useCallback(
     (fields: { name: string; value: string }[]) => {
       const o: Record<string, string> = {}
-      fields.forEach((f) => {
-        if (f.name.trim()) o[f.name.trim()] = f.value
-      })
+      fields.forEach((f) => { if (f.name.trim()) o[f.name.trim()] = f.value })
       updateData({ body_template: JSON.stringify(o, null, 2) })
     },
     [updateData]
@@ -310,47 +458,28 @@ function WebhookConfig({
     syncFieldsToTemplate(next)
   }, [bodyFields, syncFieldsToTemplate])
 
-  const updateField = useCallback(
-    (index: number, part: "name" | "value", val: string) => {
-      const next = bodyFields.map((f, i) =>
-        i === index ? { ...f, [part]: val } : f
-      )
-      setBodyFields(next)
-      syncFieldsToTemplate(next)
-    },
-    [bodyFields, syncFieldsToTemplate]
-  )
+  const updateField = useCallback((index: number, part: "name" | "value", val: string) => {
+    const next = bodyFields.map((f, i) => i === index ? { ...f, [part]: val } : f)
+    setBodyFields(next)
+    syncFieldsToTemplate(next)
+  }, [bodyFields, syncFieldsToTemplate])
 
-  const removeField = useCallback(
-    (index: number) => {
-      const next = bodyFields.filter((_, i) => i !== index)
-      setBodyFields(next)
-      syncFieldsToTemplate(next)
-    },
-    [bodyFields, syncFieldsToTemplate]
-  )
+  const removeField = useCallback((index: number) => {
+    const next = bodyFields.filter((_, i) => i !== index)
+    setBodyFields(next)
+    syncFieldsToTemplate(next)
+  }, [bodyFields, syncFieldsToTemplate])
 
   return (
     <div className="space-y-4" dir="rtl">
       <div className="space-y-2">
         <Label className="block text-right">URL (הקלד @ למשתנים)</Label>
-        <VariableInput
-          value={(config?.url as string) ?? ""}
-          onChange={(v) => updateData({ url: v })}
-          placeholder="https://..."
-          multiline={false}
-        />
+        <VariableInput value={(config?.url as string) ?? ""} onChange={(v) => updateData({ url: v })} placeholder="https://..." multiline={false} />
       </div>
       <div className="space-y-2">
         <Label className="block text-right">Method</Label>
-        <Select
-          dir="rtl"
-          value={(config?.method as string) ?? "POST"}
-          onValueChange={(v) => updateData({ method: v })}
-        >
-          <SelectTrigger className="w-full">
-            <SelectValue />
-          </SelectTrigger>
+        <Select dir="rtl" value={(config?.method as string) ?? "POST"} onValueChange={(v) => updateData({ method: v })}>
+          <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
           <SelectContent dir="rtl">
             <SelectItem value="GET">GET</SelectItem>
             <SelectItem value="POST">POST</SelectItem>
@@ -361,60 +490,26 @@ function WebhookConfig({
       </div>
       <div className="space-y-2">
         <Label className="block text-right">Body</Label>
-        <Tabs
-          dir="rtl"
-          value={bodyTab}
-          onValueChange={(v) => {
-            if (v === "fields") {
-              switchToFields()
-              setBodyTab("fields")
-            } else {
-              setBodyTab("json")
-            }
-          }}
-        >
+        <Tabs dir="rtl" value={bodyTab} onValueChange={(v) => { if (v === "fields") { switchToFields(); setBodyTab("fields") } else { setBodyTab("json") } }}>
           <TabsList className="w-full grid grid-cols-2">
             <TabsTrigger value="json">JSON ידני</TabsTrigger>
             <TabsTrigger value="fields">שדות</TabsTrigger>
           </TabsList>
           <TabsContent value="json" className="mt-2">
-            <VariableInput
-              value={bodyTemplate}
-              onChange={(v) => updateData({ body_template: v })}
-              placeholder='{"deal_id": "{{deal.id}}"}'
-              multiline
-              className="min-h-[120px] font-mono text-xs text-right"
-            />
+            <VariableInput value={bodyTemplate} onChange={(v) => updateData({ body_template: v })} placeholder='{"deal_id": "{{deal.id}}"}' multiline className="min-h-[120px] font-mono text-xs text-right" />
           </TabsContent>
           <TabsContent value="fields" className="mt-2 space-y-2">
-            {bodyTab === "fields" &&
-              bodyFields.map((f, i) => (
-                <div key={i} className="flex gap-2 items-start">
-                  <Input
-                    placeholder="שם שדה"
-                    value={f.name}
-                    onChange={(e) => updateField(i, "name", e.target.value)}
-                    className="shrink-0 w-28 text-right"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <VariableInput
-                      value={f.value}
-                      onChange={(v) => updateField(i, "value", v)}
-                      placeholder="ערך (הקלד @ למשתנים)"
-                      multiline={false}
-                    />
-                  </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="icon"
-                    className="shrink-0"
-                    onClick={() => removeField(i)}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
+            {bodyTab === "fields" && bodyFields.map((f, i) => (
+              <div key={i} className="flex gap-2 items-start">
+                <Input placeholder="שם שדה" value={f.name} onChange={(e) => updateField(i, "name", e.target.value)} className="shrink-0 w-28 text-right" />
+                <div className="flex-1 min-w-0">
+                  <VariableInput value={f.value} onChange={(v) => updateField(i, "value", v)} placeholder="ערך (הקלד @ למשתנים)" multiline={false} />
                 </div>
-              ))}
+                <Button type="button" variant="ghost" size="icon" className="shrink-0" onClick={() => removeField(i)}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
+            ))}
             <Button type="button" variant="outline" size="sm" onClick={addField} className="w-full">
               <Plus className="h-4 w-4 ml-1" />
               הוסף שדה
@@ -425,6 +520,8 @@ function WebhookConfig({
     </div>
   )
 }
+
+// ─── Exports ──────────────────────────────────────────────────────────────────
 
 export interface PipelineOption {
   id: string
@@ -444,9 +541,19 @@ interface NodeConfigPanelProps {
   stages?: StageOption[]
   mailingLists?: { id: string; name: string }[]
   whatsappCredentials?: { id: string; name: string; provider: "official" | "green_api" }[]
+  /** מצב יצירה פשוטה: רק שדות קונפיגורציה, בלי כותרת כבדה ובלי בחירת סוג צומת */
+  embedMode?: boolean
 }
 
-export function NodeConfigPanel({ node, onConfigChange, pipelines = [], stages = [], mailingLists = [], whatsappCredentials = [] }: NodeConfigPanelProps) {
+export function NodeConfigPanel({
+  node,
+  onConfigChange,
+  pipelines = [],
+  stages = [],
+  mailingLists = [],
+  whatsappCredentials = [],
+  embedMode = false,
+}: NodeConfigPanelProps) {
   const nodeData = node?.data as unknown as AutomationNodeData | undefined
   const updateData = useCallback(
     (updates: Partial<AutomationNodeData["config"]> | { label?: string; subtype?: string }) => {
@@ -458,9 +565,7 @@ export function NodeConfigPanel({ node, onConfigChange, pipelines = [], stages =
           config: nodeData.config,
         })
       } else {
-        onConfigChange(node.id, {
-          config: { ...nodeData.config, ...updates },
-        })
+        onConfigChange(node.id, { config: { ...nodeData.config, ...updates } })
       }
     },
     [node, nodeData, onConfigChange]
@@ -478,27 +583,16 @@ export function NodeConfigPanel({ node, onConfigChange, pipelines = [], stages =
 
   const { type, subtype, config } = nodeData
 
-  const Icon = type === "trigger" ? Zap : type === "condition" ? GitBranch : subtype === "send_whatsapp" ? MessageSquare : Play
+  const Icon = type === "trigger" ? () => <span>⚡</span> : type === "condition" ? GitBranch : subtype === "send_whatsapp" ? MessageSquare : Play
 
-  return (
-    <Card className="w-full max-w-sm text-right border-none shadow-none bg-transparent" dir="rtl">
-      <CardHeader className="pb-4 pt-0 px-0">
-        <div className="flex items-center gap-2 mb-1">
-          <div className={cn(
-            "rounded-md p-1.5",
-            type === "trigger" ? "bg-amber-100 text-amber-600" :
-            type === "condition" ? "bg-slate-100 text-slate-600" :
-            "bg-blue-100 text-blue-600"
-          )}>
-            <Icon size={16} />
-          </div>
-          <span className="text-sm font-bold text-slate-700">הגדרות {type === "trigger" ? "טריגר" : type === "condition" ? "תנאי" : "פעולה"}</span>
-        </div>
-        <h3 className="text-lg font-bold text-slate-900">{nodeData.label || subtype}</h3>
-      </CardHeader>
-      <CardContent className="space-y-6 px-0">
+  const configBody = (
+    <>
+        {/* Type selector */}
+        {!embedMode && (
         <div className="space-y-2 pb-4 border-b">
-          <Label className="block text-right font-semibold">סוג {type === "trigger" ? "טריגר" : type === "condition" ? "תנאי" : "פעולה"}</Label>
+          <Label className="block text-right font-semibold">
+            סוג {type === "trigger" ? "טריגר" : type === "condition" ? "תנאי" : "פעולה"}
+          </Label>
           <Select
             dir="rtl"
             value={subtype}
@@ -508,11 +602,7 @@ export function NodeConfigPanel({ node, onConfigChange, pipelines = [], stages =
               else if (type === "action") newLabel = ACTION_LABELS[v] ?? v
               else if (v === "condition.tag") newLabel = "תגית קיימת / לא קיימת"
               else if (v === "condition.field") newLabel = "ערך שדה שווה ל..."
-              
-              updateData({
-                subtype: v,
-                label: newLabel,
-              })
+              updateData({ subtype: v, label: newLabel })
             }}
           >
             <SelectTrigger className="w-full bg-white border-slate-200">
@@ -534,44 +624,63 @@ export function NodeConfigPanel({ node, onConfigChange, pipelines = [], stages =
             </SelectContent>
           </Select>
         </div>
-
-        {/* Dynamic Config Content */}
-        {subtype === "webhook.incoming" && (
-          <div className="p-4 bg-amber-50 rounded-lg border border-amber-100">
-            <p className="text-xs text-amber-800 font-medium leading-relaxed">
-              השתמש בכתובת ה-Webhook שתיווצר לאחר השמירה כדי לקבל נתונים ממקורות חיצוניים.
-            </p>
-          </div>
         )}
 
+        {/* Trigger configs */}
         {subtype === "lead.created" && (
-          <PipelineSelectionConfig config={config} updateData={updateData} pipelines={pipelines} />
+          <LeadCreatedTriggerConfig config={config} updateData={updateData} pipelines={pipelines} />
+        )}
+        {subtype === "lead.stage_entered" && (
+          <StageEnteredTriggerConfig config={config} updateData={updateData} pipelines={pipelines} stages={stages} />
+        )}
+        {(subtype === "lead.won" || subtype === "lead.lost") && (
+          <LeadWonLostTriggerConfig config={config} updateData={updateData} pipelines={pipelines} />
+        )}
+        {subtype === "contact.created" && (
+          <p className="text-[10px] text-muted-foreground">האוטומציה תופעל בכל פעם שנוצר איש קשר חדש.</p>
+        )}
+        {subtype === "contact.tag_added" && (
+          <ContactTagTriggerConfig config={config} updateData={updateData} />
         )}
 
+        {/* Action configs */}
         {subtype === "send_whatsapp" && (
           <WhatsappConfig config={config} updateData={updateData} credentials={whatsappCredentials} />
         )}
-
-        {subtype === "send_webhook" && (
-          <WebhookConfig config={config} updateData={updateData} />
-        )}
-
         {subtype === "add_tag" && (
-          <TagConfig config={config} updateData={updateData} label="תגית להוספה" />
+          <TagConfig
+            config={config}
+            updateData={updateData}
+            description="התגית תתווסף לאיש הקשר המקושר לליד."
+          />
         )}
-
+        {subtype === "remove_tag" && (
+          <TagConfig
+            config={config}
+            updateData={updateData}
+            description="התגית תוסר מאיש הקשר המקושר לליד."
+          />
+        )}
+        {subtype === "update_lead_field" && (
+          <UpdateLeadFieldConfig config={config} updateData={updateData} />
+        )}
+        {subtype === "update_contact_field" && (
+          <UpdateContactFieldConfig config={config} updateData={updateData} />
+        )}
         {subtype === "delay" && (
           <DelayConfig config={config} updateData={updateData} />
         )}
-
-        {subtype === "update_field" && (
-          <FieldUpdateConfig config={config} updateData={updateData} />
+        {subtype === "send_webhook" && (
+          <WebhookConfig config={config} updateData={updateData} />
+        )}
+        {subtype === "move_to_stage" && (
+          <MoveToStageActionConfig config={config} updateData={updateData} pipelines={pipelines} stages={stages} />
         )}
 
+        {/* Condition configs */}
         {subtype === "condition.tag" && (
           <ConditionTagConfig config={config} updateData={updateData} />
         )}
-
         {subtype === "condition.field" && (
           <div className="space-y-4">
             <div className="space-y-2">
@@ -579,9 +688,10 @@ export function NodeConfigPanel({ node, onConfigChange, pipelines = [], stages =
               <Input
                 value={(config?.field_name as string) ?? ""}
                 onChange={(e) => updateData({ field_name: e.target.value })}
-                placeholder="למשל: city"
+                placeholder="למשל: deal.value או contact.city"
                 className="text-right"
               />
+              <p className="text-[10px] text-muted-foreground">השתמש ב- deal.FIELD לשדות ליד, contact.FIELD לשדות איש קשר</p>
             </div>
             <div className="space-y-2">
               <Label className="block text-right">ערך להשוואה</Label>
@@ -594,6 +704,38 @@ export function NodeConfigPanel({ node, onConfigChange, pipelines = [], stages =
             </div>
           </div>
         )}
+    </>
+  )
+
+  if (embedMode) {
+    return (
+      <div className="w-full text-right space-y-6" dir="rtl">
+        {configBody}
+      </div>
+    )
+  }
+
+  return (
+    <Card className="w-full max-w-sm text-right border-none shadow-none bg-transparent" dir="rtl">
+      <CardHeader className="pb-4 pt-0 px-0">
+        <div className="flex items-center gap-2 mb-1">
+          <div className={cn(
+            "rounded-md p-1.5",
+            type === "trigger" ? "bg-amber-100 text-amber-600" :
+            type === "condition" ? "bg-slate-100 text-slate-600" :
+            "bg-blue-100 text-blue-600"
+          )}>
+            <Icon size={16} />
+          </div>
+          <span className="text-sm font-bold text-slate-700">
+            הגדרות {type === "trigger" ? "טריגר" : type === "condition" ? "תנאי" : "פעולה"}
+          </span>
+        </div>
+        <h3 className="text-lg font-bold text-slate-900">{nodeData.label || subtype}</h3>
+      </CardHeader>
+
+      <CardContent className="space-y-6 px-0">
+        {configBody}
       </CardContent>
     </Card>
   )

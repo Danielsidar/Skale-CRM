@@ -3,6 +3,7 @@ import { Heebo } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { ThemeProvider } from "@/components/theme-provider";
+import { QueryProvider } from "@/components/providers/QueryProvider";
 
 const heebo = Heebo({
   subsets: ["hebrew", "latin"],
@@ -25,16 +26,18 @@ export default function RootLayout({
         className={`${heebo.variable} font-sans antialiased`}
         dir="rtl"
       >
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="light"
-          enableSystem={false}
-          forcedTheme="light"
-          disableTransitionOnChange
-        >
-          {children}
-          <Toaster position="top-center" dir="rtl" />
-        </ThemeProvider>
+        <QueryProvider>
+          <ThemeProvider
+            attribute="class"
+            defaultTheme="light"
+            enableSystem={false}
+            forcedTheme="light"
+            disableTransitionOnChange
+          >
+            {children}
+            <Toaster position="top-center" dir="rtl" />
+          </ThemeProvider>
+        </QueryProvider>
       </body>
     </html>
   );

@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useBusiness } from "@/lib/hooks/useBusiness"
+import { useTierFeatures } from "@/lib/hooks/useTierFeatures"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -12,7 +13,7 @@ import {
   Target, LayoutGrid, Mail, Zap, Kanban,
   Download, Pencil, Trash2, UserCheck, CalendarDays,
   Package, Users as UsersIcon, Key, BarChart3, ChevronLeft,
-  Phone, EyeOff, DollarSign, MapPin, RotateCcw, X
+  Phone, EyeOff, DollarSign, MapPin, RotateCcw, X, Lock
 } from "lucide-react"
 import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
@@ -188,6 +189,7 @@ const SECTIONS: PermSection[] = [
 
 export default function SettingsUsersPage() {
   const { businessId } = useBusiness()
+  const { features } = useTierFeatures()
   const supabase = createClient()
 
   const [members, setMembers] = useState<BusinessUserRow[]>([])
@@ -385,6 +387,7 @@ export default function SettingsUsersPage() {
 
   if (!businessId) return null
   const isAdmin = currentUserRole === "admin"
+  const atUserLimit = features.max_users !== null && members.length >= features.max_users
 
   // ---- Render section for a given role (role-level dialog) ----
   const renderSection = (role: string, section: PermSection) => {
@@ -596,11 +599,15 @@ export default function SettingsUsersPage() {
             </Button>
           )}
           {isAdmin && (
-            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <Dialog open={isDialogOpen} onOpenChange={atUserLimit ? undefined : setIsDialogOpen}>
               <DialogTrigger asChild>
-                <Button className="gap-2 rounded-xl shadow-lg shadow-primary/20 font-bold">
-                  <Plus className="h-4 w-4" />
-                  הוסף איש צוות
+                <Button
+                  className="gap-2 rounded-xl shadow-lg shadow-primary/20 font-bold"
+                  disabled={atUserLimit}
+                  title={atUserLimit ? `הגעת למגבלת המסלול שלך: ${features.max_users} משתמשים` : undefined}
+                >
+                  {atUserLimit ? <Lock className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                  הוסף איש צוות {atUserLimit ? `(${members.length}/${features.max_users})` : ""}
                 </Button>
               </DialogTrigger>
               <DialogContent dir="rtl">

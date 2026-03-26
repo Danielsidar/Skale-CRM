@@ -39,6 +39,7 @@ export async function middleware(request: NextRequest) {
                      request.nextUrl.pathname.startsWith('/register')
   const isPublicBookingPage = request.nextUrl.pathname.startsWith('/book/') ||
                               request.nextUrl.pathname.startsWith('/api/booking')
+  const isSuperAdminPage = request.nextUrl.pathname.startsWith('/super-admin')
 
   if (!user && !isAuthPage && !isPublicBookingPage && request.nextUrl.pathname !== '/') {
     const url = request.nextUrl.clone()
@@ -50,6 +51,29 @@ export async function middleware(request: NextRequest) {
     const url = request.nextUrl.clone()
     url.pathname = '/leads'
     return NextResponse.redirect(url)
+  }
+
+  // Guard super-admin routes: verify the user exists in super_admins table.
+  // Uses the same SSR client (with the user's session) — RLS policy already
+  // restricts SELECT to auth.uid() = user_id, so no service role needed.
+  if (isSuperAdminPage) {
+    if (!user) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/login'
+      return NextResponse.redirect(url)
+    }
+
+    const { data: superAdmin } = await supabase
+      .from('super_admins')
+      .select('user_id')
+      .eq('user_id', user.id)
+      .single()
+
+    if (!superAdmin) {
+      const url = request.nextUrl.clone()
+      url.pathname = '/leads'
+      return NextResponse.redirect(url)
+    }
   }
 
   // IMPORTANT: You *must* return the supabaseResponse object as it is. If you're

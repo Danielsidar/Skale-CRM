@@ -2,20 +2,20 @@
 
 import { memo } from "react"
 import { Handle, Position, type NodeProps } from "@xyflow/react"
-import { Zap, ListPlus, Tag, Webhook, UserPlus } from "lucide-react"
+import { Zap, Tag, UserPlus, GitBranch, Trophy, XCircle, UserCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { AutomationNodeData } from "@/types/automation"
 
-const ICONS: Record<string, any> = {
-  "contact.tag_added": Tag,
-  "webhook.incoming": Webhook,
+const ICONS: Record<string, React.ElementType> = {
   "lead.created": UserPlus,
+  "lead.stage_entered": GitBranch,
+  "lead.won": Trophy,
+  "lead.lost": XCircle,
+  "contact.created": UserCheck,
+  "contact.tag_added": Tag,
 }
 
-export const TriggerNode = memo(function TriggerNode({
-  data,
-  selected,
-}: NodeProps) {
+export const TriggerNode = memo(function TriggerNode({ data, selected }: NodeProps) {
   const d = data as unknown as AutomationNodeData
   const Icon = ICONS[d.subtype] || Zap
 

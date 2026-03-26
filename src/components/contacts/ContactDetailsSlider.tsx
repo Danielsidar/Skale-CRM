@@ -30,7 +30,7 @@ import {
   Video,
   MapPin
 } from "lucide-react"
-import { ContactTimeline } from "./ContactTimeline"
+import { ContactTimeline, type TimelineEvent } from "./ContactTimeline"
 import { CreateAppointmentDialog } from "./CreateAppointmentDialog"
 import { EditAppointmentDialog } from "./EditAppointmentDialog"
 import { toast } from "sonner"
@@ -68,6 +68,7 @@ export function ContactDetailsSlider({
   const [activities, setActivities] = useState<Activity[]>([])
   const [deals, setDeals] = useState<Deal[]>([])
   const [appointments, setAppointments] = useState<Appointment[]>([])
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [noteContent, setNoteContent] = useState("")
   const [submittingNote, setSubmittingNote] = useState(false)
@@ -92,8 +93,7 @@ export function ContactDetailsSlider({
       if (!contactData) throw new Error("איש קשר לא נמצא")
       setContact(contactData)
 
-      // 2. Find all contacts with the same email or phone in this business
-      // to unify activities and deals as requested by the user
+      // 2. Find related contacts (same email/phone) in parallel with nothing yet
       let allContactIds = [contactId]
       if (contactData.email || contactData.phone) {
         const orFilters = []
@@ -111,37 +111,123 @@ export function ContactDetailsSlider({
         }
       }
 
-      // 3. Fetch deals for all related contacts
-      const { data: dealData } = await supabase
-        .from("deals")
-        .select(`
-          *,
-          stages (name, color, is_won)
-        `)
-        .in("contact_id", allContactIds)
-        .order("created_at", { ascending: false })
+      // 3. Fetch deals, activities, and appointments in parallel (not sequentially)
+      const [dealResult, activityResult, apptResult] = await Promise.all([
+        supabase
+          .from("deals")
+          .select(`
+            *,
+            stages (name, color, is_won, is_lost),
+            pipelines (name)
+          `)
+          .in("contact_id", allContactIds)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("activities")
+          .select("*")
+          .or(`contact_id.in.(${allContactIds.join(",")})`)
+          .order("created_at", { ascending: false }),
+        supabase
+          .from("appointments")
+          .select("*")
+          .in("contact_id", allContactIds)
+          .order("start_time", { ascending: true }),
+      ])
       
-      const dealsList = dealData ?? []
+      const dealsList = dealResult.data ?? []
+      const activityData = activityResult.data ?? []
+      const apptData = apptResult.data ?? []
+      
       setDeals(dealsList)
+      setActivities(activityData)
+      setAppointments(apptData)
+      
       const allDealIds = dealsList.map(d => d.id)
 
-      // 4. Fetch activities for all related contacts OR related deals
-      const { data: activityData } = await supabase
-        .from("activities")
-        .select("*")
-        .or(`contact_id.in.(${allContactIds.join(",")})${allDealIds.length > 0 ? `,deal_id.in.(${allDealIds.join(",")})` : ""}`)
-        .order("created_at", { ascending: false })
-      
-      setActivities(activityData ?? [])
+      // 4. Fetch stage history only if there are deals (dependent on step 3)
+      let stageHistory: any[] = []
+      if (allDealIds.length > 0) {
+        const { data: histData } = await supabase
+          .from("deal_stage_history")
+          .select(`
+            *,
+            old_stage:stages!deal_stage_history_old_stage_id_fkey (name, color, is_won, is_lost),
+            new_stage:stages!deal_stage_history_new_stage_id_fkey (name, color, is_won, is_lost)
+          `)
+          .in("deal_id", allDealIds)
+          .order("created_at", { ascending: false })
+        stageHistory = histData ?? []
+      }
 
-      // 5. Fetch appointments for all related contacts
-      const { data: apptData } = await supabase
-        .from("appointments")
-        .select("*")
-        .in("contact_id", allContactIds)
-        .order("start_time", { ascending: true })
-      
-      setAppointments(apptData ?? [])
+      // 7. Build unified timeline events
+      const events: TimelineEvent[] = []
+
+      // Contact created
+      events.push({
+        kind: "contact_created",
+        id: contactData.id,
+        created_at: contactData.created_at,
+      })
+
+      // Activities
+      for (const act of activityData ?? []) {
+        events.push({
+          kind: "activity",
+          id: act.id,
+          created_at: act.created_at ?? new Date().toISOString(),
+          type: act.type,
+          content: act.content ?? null,
+        })
+      }
+
+      // Deal created events
+      for (const deal of dealsList) {
+        if (!deal.created_at) continue
+        events.push({
+          kind: "deal_created",
+          id: deal.id,
+          created_at: deal.created_at,
+          deal_title: deal.title,
+          pipeline_name: (deal as any).pipelines?.name ?? "פייפליין",
+        })
+      }
+
+      // Stage change events
+      for (const hist of stageHistory) {
+        if (!hist.created_at) continue
+        const deal = dealsList.find(d => d.id === hist.deal_id)
+        events.push({
+          kind: "stage_change",
+          id: hist.id,
+          created_at: hist.created_at,
+          deal_title: deal?.title ?? "עיסקה",
+          old_stage: hist.old_stage
+            ? { name: hist.old_stage.name, color: hist.old_stage.color }
+            : null,
+          new_stage: {
+            name: hist.new_stage?.name ?? "שלב",
+            color: hist.new_stage?.color ?? null,
+            is_won: hist.new_stage?.is_won ?? false,
+            is_lost: hist.new_stage?.is_lost ?? false,
+          },
+        })
+      }
+
+      // Appointment events
+      for (const appt of apptData ?? []) {
+        events.push({
+          kind: "appointment",
+          id: appt.id,
+          created_at: appt.created_at ?? appt.start_time,
+          title: appt.title,
+          start_time: appt.start_time,
+          status: appt.status,
+        })
+      }
+
+      // Sort all events newest first
+      events.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+      setTimelineEvents(events)
     } catch (error) {
       console.error("Error loading contact details:", error)
       toast.error("שגיאה בטעינת נתוני איש הקשר")
@@ -159,7 +245,20 @@ export function ContactDetailsSlider({
   const handleAddNote = async () => {
     if (!noteContent.trim() || !contactId || !contact) return
     
+    const optimisticNote = noteContent.trim()
     setSubmittingNote(true)
+
+    // Optimistic update: append the note to the timeline immediately
+    const optimisticEvent: TimelineEvent = {
+      kind: "activity",
+      id: `optimistic-${Date.now()}`,
+      created_at: new Date().toISOString(),
+      type: "note",
+      content: optimisticNote,
+    }
+    setTimelineEvents((prev) => [optimisticEvent, ...prev])
+    setNoteContent("")
+
     try {
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error("לא מחובר")
@@ -169,16 +268,19 @@ export function ContactDetailsSlider({
         type: "note",
         contact_id: contactId,
         created_by_user_id: user.id,
-        content: noteContent.trim()
+        content: optimisticNote
       })
 
       if (res.error) throw new Error(res.error)
 
-      setNoteContent("")
       toast.success("הערה נוספה בהצלחה")
+      // Reload in background to get the real ID and any server-side data
       loadData()
       onActivityAdded?.()
     } catch (error: any) {
+      // Revert optimistic update on failure
+      setTimelineEvents((prev) => prev.filter(e => e.id !== optimisticEvent.id))
+      setNoteContent(optimisticNote)
       toast.error("שגיאה בהוספת הערה", { description: error.message })
     } finally {
       setSubmittingNote(false)
@@ -193,8 +295,34 @@ export function ContactDetailsSlider({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className="w-full sm:max-w-[500px] p-0 flex flex-col h-full bg-background border-l" side="right">
         {loading && !contact ? (
-          <div className="flex items-center justify-center h-full">
-            <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+          <div className="p-6 space-y-6 animate-pulse">
+            <div className="flex items-center gap-4">
+              <div className="h-14 w-14 rounded-2xl bg-muted flex-shrink-0" />
+              <div className="space-y-2 flex-1">
+                <div className="h-5 w-40 bg-muted rounded" />
+                <div className="h-4 w-28 bg-muted rounded" />
+              </div>
+            </div>
+            <div className="space-y-3">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <div key={i} className="flex gap-3">
+                  <div className="h-4 w-4 bg-muted rounded mt-0.5 flex-shrink-0" />
+                  <div className="h-4 flex-1 bg-muted rounded" />
+                </div>
+              ))}
+            </div>
+            <div className="h-10 w-full bg-muted rounded-lg" />
+            <div className="space-y-4 pt-4">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="flex gap-3">
+                  <div className="h-8 w-8 rounded-full bg-muted flex-shrink-0" />
+                  <div className="space-y-2 flex-1">
+                    <div className="h-4 w-48 bg-muted rounded" />
+                    <div className="h-3 w-24 bg-muted rounded" />
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         ) : contact ? (
           <>
@@ -317,7 +445,7 @@ export function ContactDetailsSlider({
                     <Clock className="h-4 w-4 text-muted-foreground" />
                     היסטוריית פעילות
                   </h3>
-                  <ContactTimeline activities={activities} loading={loading} />
+                  <ContactTimeline events={timelineEvents} loading={loading} />
                 </div>
               </TabsContent>
 

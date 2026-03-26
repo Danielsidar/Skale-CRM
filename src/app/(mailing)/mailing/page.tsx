@@ -20,7 +20,6 @@ export default function MailingPage() {
           </p>
         </div>
       </div>
-
       <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
         <MailingStats />
       </div>

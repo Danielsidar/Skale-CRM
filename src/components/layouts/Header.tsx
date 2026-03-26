@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
-import { User, Settings, LogOut, HelpCircle, ChevronDown } from "lucide-react"
+import { User, Settings, LogOut, HelpCircle, ChevronDown, ShieldCheck } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -29,15 +29,23 @@ export function Header() {
   const { businesses, businessId } = useBusiness()
   const [displayName, setDisplayName] = useState("")
   const [email, setEmail] = useState("")
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
 
   const activeBusiness = businesses.find((b) => b.id === businessId)
   const userRole = activeBusiness?.role ?? ""
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
+    supabase.auth.getUser().then(async ({ data: { user } }) => {
       if (user) {
         setDisplayName(user.user_metadata?.full_name || "משתמש")
         setEmail(user.email ?? "")
+
+        const { data } = await supabase
+          .from("super_admins")
+          .select("user_id")
+          .eq("user_id", user.id)
+          .maybeSingle()
+        setIsSuperAdmin(!!data)
       }
     })
   }, [supabase])
@@ -72,7 +80,7 @@ export function Header() {
                 <ChevronDown className="h-3.5 w-3.5 text-muted-foreground hidden sm:block" />
               </Button>
             </DropdownMenuTrigger>
-            <DropdownMenuContent align="start" className="w-60 mt-2 rounded-xl">
+            <DropdownMenuContent align="end" sideOffset={8} className="w-60 rounded-xl">
               <DropdownMenuLabel className="text-right p-3">
                 <div className="flex flex-col gap-0.5">
                   <span className="font-bold">{displayName}</span>
@@ -94,6 +102,18 @@ export function Header() {
                   <HelpCircle className="h-4 w-4" />
                 </a>
               </DropdownMenuItem>
+              {isSuperAdmin && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    onClick={() => router.push("/super-admin")}
+                    className="text-right justify-end gap-2 cursor-pointer text-violet-600 focus:text-violet-600 focus:bg-violet-50 dark:focus:bg-violet-950/30 font-semibold"
+                  >
+                    <span>פאנל סופר אדמין</span>
+                    <ShieldCheck className="h-4 w-4" />
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive text-right justify-end gap-2 cursor-pointer font-semibold"

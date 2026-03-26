@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useBusiness } from "@/lib/hooks/useBusiness"
+import { useTierFeatures } from "@/lib/hooks/useTierFeatures"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Search, Plus, List, Users, Trash2, Edit } from "lucide-react"
+import { Search, Plus, List, Users, Trash2, Edit, Lock } from "lucide-react"
 import {
   Table,
   TableBody,
@@ -36,6 +37,7 @@ interface MailingListManagerProps {
 
 export function MailingListManager({ selectedId, onSelect, variant = "table" }: MailingListManagerProps) {
   const { businessId } = useBusiness()
+  const { features } = useTierFeatures()
   const router = useRouter()
   const [lists, setLists] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
@@ -71,6 +73,14 @@ export function MailingListManager({ selectedId, onSelect, variant = "table" }: 
 
   const handleCreateList = async () => {
     if (!newListName.trim() || !businessId) return
+    if (!features.mailing) {
+      toast.error("מיילינג לא זמין במסלול שלך")
+      return
+    }
+    if (features.max_mailing_lists !== null && lists.length >= features.max_mailing_lists) {
+      toast.error(`הגעת למגבלת רשימות התפוצה (${features.max_mailing_lists})`)
+      return
+    }
 
     const { error } = await supabase
       .from("mailing_lists")
@@ -122,8 +132,20 @@ export function MailingListManager({ selectedId, onSelect, variant = "table" }: 
             <h2 className="font-bold text-lg">רשימות תפוצה</h2>
             <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
               <DialogTrigger asChild>
-                <Button size="icon" variant="ghost" className="h-8 w-8 rounded-lg bg-primary/5 text-primary hover:bg-primary/10">
-                  <Plus className="h-4 w-4" />
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="h-8 w-8 rounded-lg bg-primary/5 text-primary hover:bg-primary/10"
+                  disabled={!features.mailing || (features.max_mailing_lists !== null && lists.length >= features.max_mailing_lists)}
+                  title={
+                    !features.mailing
+                      ? "מיילינג לא זמין במסלול שלך"
+                      : features.max_mailing_lists !== null && lists.length >= features.max_mailing_lists
+                      ? `הגעת למגבלת רשימות התפוצה (${features.max_mailing_lists})`
+                      : undefined
+                  }
+                >
+                  {(!features.mailing || (features.max_mailing_lists !== null && lists.length >= features.max_mailing_lists)) ? <Lock className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                 </Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-[425px]" dir="rtl">
@@ -233,8 +255,18 @@ export function MailingListManager({ selectedId, onSelect, variant = "table" }: 
         
         <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
           <DialogTrigger asChild>
-            <Button className="gap-2">
-              <Plus className="h-4 w-4" />
+            <Button
+              className="gap-2"
+              disabled={!features.mailing || (features.max_mailing_lists !== null && lists.length >= features.max_mailing_lists)}
+              title={
+                !features.mailing
+                  ? "מיילינג לא זמין במסלול שלך"
+                  : features.max_mailing_lists !== null && lists.length >= features.max_mailing_lists
+                  ? `הגעת למגבלת רשימות התפוצה (${features.max_mailing_lists})`
+                  : undefined
+              }
+            >
+              {(!features.mailing || (features.max_mailing_lists !== null && lists.length >= features.max_mailing_lists)) ? <Lock className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
               רשימה חדשה
             </Button>
           </DialogTrigger>

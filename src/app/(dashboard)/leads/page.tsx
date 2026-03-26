@@ -1,13 +1,26 @@
 "use client"
 
-import { useEffect, useState, Suspense } from "react"
+import { useEffect, useState, Suspense, lazy } from "react"
 import { useSearchParams, useRouter, usePathname } from "next/navigation"
 import { createClient } from "@/lib/supabase/client"
 import { useBusiness } from "@/lib/hooks/useBusiness"
 import { usePermissions } from "@/lib/hooks/usePermissions"
+import { useTierFeatures } from "@/lib/hooks/useTierFeatures"
+import { usePipelinesQuery } from "@/lib/hooks/queries"
 import { moveDealStage } from "@/lib/services/crm"
 import { LeadsTable, LeadWithDetails } from "@/components/leads/LeadsTable"
 import { Button } from "@/components/ui/button"
+
+// Lazy-load heavy components to reduce initial bundle
+const ContactDetailsSlider = lazy(() =>
+  import("@/components/contacts/ContactDetailsSlider").then((m) => ({ default: m.ContactDetailsSlider }))
+)
+const LeadCsvImportDialog = lazy(() =>
+  import("@/components/leads/LeadCsvImportDialog").then((m) => ({ default: m.LeadCsvImportDialog }))
+)
+const KanbanBoard = lazy(() =>
+  import("@/components/kanban/KanbanBoard").then((m) => ({ default: m.KanbanBoard }))
+)
 import { 
   Plus, 
   Search, 
@@ -30,7 +43,9 @@ import {
   Settings2,
   Eye,
   EyeOff,
-  GripVertical
+  GripVertical,
+  Lock,
+  Upload
 } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -55,7 +70,6 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { cn } from "@/lib/utils"
 import { QuickAddDealDialog } from "@/components/kanban/QuickAddDealDialog"
-import { KanbanBoard } from "@/components/kanban/KanbanBoard"
 import {
   DragDropContext,
   Droppable,
@@ -78,9 +92,45 @@ type Stage = Database["public"]["Tables"]["stages"]["Row"]
 
 export default function LeadsPage() {
   return (
-    <Suspense fallback={<div>טוען...</div>}>
+    <Suspense fallback={<LeadsPageSkeleton />}>
       <LeadsPageContent />
     </Suspense>
+  )
+}
+
+function LeadsPageSkeleton() {
+  return (
+    <div className="flex flex-col h-full gap-6 pb-20">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="bg-muted h-10 w-10 rounded-xl animate-pulse" />
+          <div className="space-y-1.5">
+            <div className="h-6 w-32 bg-muted rounded animate-pulse" />
+            <div className="h-4 w-56 bg-muted rounded animate-pulse" />
+          </div>
+        </div>
+        <div className="h-10 w-28 bg-muted rounded-lg animate-pulse" />
+      </div>
+      <div className="bg-white p-3 rounded-xl border border-slate-200 shadow-sm h-16 animate-pulse" />
+      <div className="rounded-xl border border-border overflow-hidden">
+        <div className="bg-muted/30 px-4 py-3 border-b border-border">
+          <div className="flex gap-4">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <div key={i} className="h-4 flex-1 bg-muted rounded animate-pulse" />
+            ))}
+          </div>
+        </div>
+        <div className="divide-y divide-border">
+          {Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} className="px-4 py-3 flex gap-4 items-center">
+              {Array.from({ length: 7 }).map((_, j) => (
+                <div key={j} className={`h-4 flex-1 bg-muted rounded animate-pulse ${j === 0 ? "max-w-[180px]" : ""}`} />
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -88,6 +138,7 @@ function LeadsPageContent() {
   const { businessId, businesses } = useBusiness()
   const userRole = businesses.find(b => b.id === businessId)?.role || 'agent'
   const { can } = usePermissions()
+  const { features } = useTierFeatures()
   const searchParams = useSearchParams()
   const router = useRouter()
   const pathname = usePathname()
@@ -102,7 +153,6 @@ function LeadsPageContent() {
   const [isSettingsLoaded, setIsSettingsLoaded] = useState(false)
   const [pipelineSearchTerm, setPipelineSearchTerm] = useState("")
   const [leads, setLeads] = useState<LeadWithDetails[]>([])
-  const [allFilteredDeals, setAllFilteredDeals] = useState<LeadWithDetails[]>([])
   const [loading, setLoading] = useState(true)
   const [searchTerm, setSearchTerm] = useState("")
   const [currentPage, setCurrentPage] = useState(1)
@@ -115,6 +165,7 @@ function LeadsPageContent() {
   const [bulkNewTag, setBulkNewTag] = useState<string>("")
   const [isBulkTagDialogOpen, setIsBulkTagDialogOpen] = useState(false)
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false)
+  const [isCsvImportOpen, setIsCsvImportOpen] = useState(false)
   const [pipelines, setPipelines] = useState<Pipeline[]>([])
   const [allStages, setAllStages] = useState<Stage[]>([])
   const [businessUsers, setBusinessUsers] = useState<any[]>([])
@@ -122,13 +173,16 @@ function LeadsPageContent() {
   const [isColumnSettingsOpen, setIsColumnSettingsOpen] = useState(false)
   const [currentUser, setCurrentUser] = useState<any>(null)
   const [ownerFilter, setOwnerFilter] = useState<string>("all")
-  const [statusFilter, setStatusFilter] = useState<"active" | "won" | "lost" | "all">("active")
+  const [statusFilter, setStatusFilter] = useState<"active" | "won" | "lost" | "all">("all")
   const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [allTagsInBusiness, setAllTagsInBusiness] = useState<string[]>([])
   const [dateFrom, setDateFrom] = useState<string>("")
   const [dateTo, setDateTo] = useState<string>("")
   const [isFilterSheetOpen, setIsFilterSheetOpen] = useState(false)
   const [isUsersLoading, setIsUsersLoading] = useState(false)
+  const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
+  const [sliderOpen, setSliderOpen] = useState(false)
+  const [hasLoadedInitially, setHasLoadedInitially] = useState(false)
   
   const [allColumns, setAllColumns] = useState([
     { id: 'title', label: 'שם הליד' },
@@ -151,6 +205,17 @@ function LeadsPageContent() {
   })
   
   const supabase = createClient()
+
+  // Use cached pipelines query instead of fetching in loadLeads
+  const { data: pipelinesWithStages } = usePipelinesQuery(businessId)
+
+  // Sync pipelines/stages state from cached query
+  useEffect(() => {
+    if (!pipelinesWithStages) return
+    const flatStages = pipelinesWithStages.flatMap((p) => p.stages ?? [])
+    setPipelines(pipelinesWithStages as any)
+    setAllStages(flatStages as any)
+  }, [pipelinesWithStages])
 
   const updateViewMode = (mode: "table" | "pipeline") => {
     setViewMode(mode)
@@ -370,10 +435,12 @@ function LeadsPageContent() {
   useEffect(() => {
     const fetchTags = async () => {
       if (!businessId) return
-      const { data, error } = await supabase
+      // Only fetch the tags column (not all deal data) to get unique tags
+      const { data } = await supabase
         .from("deals")
         .select("tags")
         .eq("business_id", businessId)
+        .not("tags", "is", null)
       
       if (data) {
         const uniqueTags = Array.from(new Set(data.flatMap(d => d.tags || [])))
@@ -387,97 +454,74 @@ function LeadsPageContent() {
     if (!businessId) return
     setLoading(true)
     try {
-      // Fetch pipelines and all stages for the business (keep for selectors)
-      const { data: pData } = await supabase.from("pipelines").select("*").eq("business_id", businessId)
-      const pipelineIds = (pData || []).map(p => p.id)
-      const { data: sData } = await supabase
-        .from("stages")
-        .select("*")
-        .in("pipeline_id", pipelineIds)
-        .order("position")
-      
-      const typedPipelines = (pData || []) as Pipeline[]
-      const typedStages = (sData || []) as Stage[]
-      setPipelines(typedPipelines)
-      setAllStages(typedStages)
-
-      const wonStageIds = typedStages.filter(s => s.is_won).map(s => s.id)
-      const lostStageIds = typedStages.filter(s => s.is_lost).map(s => s.id)
-      const activeStageIds = typedStages.filter(s => !s.is_won && !s.is_lost).map(s => s.id)
+      // Use stages already loaded from usePipelinesQuery (no extra queries needed)
+      const currentStages = allStages
+      const wonStageIds = currentStages.filter(s => s.is_won).map(s => s.id)
+      const lostStageIds = currentStages.filter(s => s.is_lost).map(s => s.id)
+      const activeStageIds = currentStages.filter(s => !s.is_won && !s.is_lost).map(s => s.id)
 
       // Calculate range for pagination
       const from = (currentPage - 1) * pageSize
       const to = from + pageSize - 1
 
-      // Build Base Query
-      const getBaseQuery = () => {
-        let q = supabase
-          .from("deals")
-          .select(`
-            *,
-            pipeline:pipelines(*),
-            stage:stages(*),
-            contact:contacts(*)
-          `, { count: 'exact' })
-          .eq("business_id", businessId)
+      // Build query with pagination + count in a single request
+      let q = supabase
+        .from("deals")
+        .select(`
+          *,
+          pipeline:pipelines(id, name),
+          stage:stages(id, name, color, is_won, is_lost, position),
+          contact:contacts(id, full_name, email, phone)
+        `, { count: 'exact' })
+        .eq("business_id", businessId)
 
-        // Status Filter
-        if (statusFilter === "active") {
-          if (activeStageIds.length > 0) q = q.in("stage_id", activeStageIds)
-        } else if (statusFilter === "won") {
-          if (wonStageIds.length > 0) q = q.in("stage_id", wonStageIds)
-          else q = q.eq("id", "00000000-0000-0000-0000-000000000000")
-        } else if (statusFilter === "lost") {
-          if (lostStageIds.length > 0) q = q.in("stage_id", lostStageIds)
-          else q = q.eq("id", "00000000-0000-0000-0000-000000000000")
-        }
-
-        // Pipeline Filter
-        if (selectedPipelineIds.length > 0 && !selectedPipelineIds.includes("all")) {
-          q = q.in("pipeline_id", selectedPipelineIds)
-        }
-
-        // Search Filter
-        if (searchTerm) {
-          q = q.ilike('title', `%${searchTerm}%`)
-        }
-
-        // Tags Filter
-        if (selectedTags.length > 0) {
-          q = q.contains('tags', selectedTags)
-        }
-
-        // Owner Filter
-        if (ownerFilter === "mine" && currentUser) {
-          q = q.eq("owner_user_id", currentUser.id)
-        } else if (ownerFilter === "unassigned") {
-          q = q.is("owner_user_id", null)
-        } else if (ownerFilter !== "all") {
-          q = q.eq("owner_user_id", ownerFilter)
-        }
-
-        // Date Filters
-        if (dateFrom) {
-          q = q.gte('created_at', new Date(dateFrom).toISOString())
-        }
-        if (dateTo) {
-          const toDate = new Date(dateTo)
-          toDate.setHours(23, 59, 59, 999)
-          q = q.lte('created_at', toDate.toISOString())
-        }
-
-        return q
+      // Status Filter
+      if (statusFilter === "active") {
+        if (activeStageIds.length > 0) q = q.in("stage_id", activeStageIds)
+      } else if (statusFilter === "won") {
+        if (wonStageIds.length > 0) q = q.in("stage_id", wonStageIds)
+        else q = q.eq("id", "00000000-0000-0000-0000-000000000000")
+      } else if (statusFilter === "lost") {
+        if (lostStageIds.length > 0) q = q.in("stage_id", lostStageIds)
+        else q = q.eq("id", "00000000-0000-0000-0000-000000000000")
       }
 
-      // Fetch all for stats (without range)
-      const { data: allDealsData, error: allDealsError } = await getBaseQuery()
-        .order(sortConfig.column, { ascending: sortConfig.order === 'asc' })
+      // Pipeline Filter
+      if (selectedPipelineIds.length > 0 && !selectedPipelineIds.includes("all")) {
+        q = q.in("pipeline_id", selectedPipelineIds)
+      }
 
-      if (allDealsError) throw allDealsError
-      setAllFilteredDeals((allDealsData as unknown as LeadWithDetails[]) || [])
+      // Search Filter
+      if (searchTerm) {
+        q = q.ilike('title', `%${searchTerm}%`)
+      }
 
-      // Fetch paginated for table
-      const { data: dealsData, count, error: dealsError } = await getBaseQuery()
+      // Tags Filter
+      if (selectedTags.length > 0) {
+        q = q.contains('tags', selectedTags)
+      }
+
+      // Owner Filter
+      if (ownerFilter === "mine" && currentUser) {
+        q = q.eq("owner_user_id", currentUser.id)
+      } else if (ownerFilter === "unassigned") {
+        q = q.is("owner_user_id", null)
+      } else if (ownerFilter !== "all") {
+        q = q.eq("owner_user_id", ownerFilter)
+      }
+
+      // Date Filters
+      if (dateFrom) {
+        q = q.gte('created_at', new Date(dateFrom).toISOString())
+      }
+      if (dateTo) {
+        const toDate = new Date(dateTo)
+        toDate.setHours(23, 59, 59, 999)
+        q = q.lte('created_at', toDate.toISOString())
+      }
+
+      // Single paginated query with count (eliminates the duplicate full-data fetch)
+      const { data: dealsData, count, error: dealsError } = await q
         .order(sortConfig.column, { ascending: sortConfig.order === 'asc' })
         .range(from, to)
 
@@ -490,6 +534,7 @@ function LeadsPageContent() {
       console.error(err)
     } finally {
       setLoading(false)
+      setHasLoadedInitially(true)
     }
   }
 
@@ -498,8 +543,11 @@ function LeadsPageContent() {
   }, [statusFilter, ownerFilter, selectedPipelineIds])
 
   useEffect(() => {
-    loadLeads()
-  }, [businessId, currentPage, pageSize, ownerFilter, selectedPipelineIds, statusFilter, dateFrom, dateTo, sortConfig, selectedTags])
+    // Wait for pipelines/stages to be available before loading deals
+    if (businessId && (pipelinesWithStages || allStages.length > 0 || !businessId)) {
+      loadLeads()
+    }
+  }, [businessId, currentPage, pageSize, ownerFilter, selectedPipelineIds, statusFilter, dateFrom, dateTo, sortConfig, selectedTags, pipelinesWithStages])
 
   // Debounce search
   useEffect(() => {
@@ -552,7 +600,7 @@ function LeadsPageContent() {
 
       // Process each deal sequentially to ensure activities are logged correctly
       for (const id of selectedLeadIds) {
-        const lead = leads.find(l => l.id === id) || allFilteredDeals.find(l => l.id === id)
+        const lead = leads.find(l => l.id === id)
         if (!lead) continue
 
         // Check if stage belongs to the pipeline
@@ -585,7 +633,7 @@ function LeadsPageContent() {
     setLoading(true)
     try {
       for (const id of selectedLeadIds) {
-        const lead = leads.find(l => l.id === id) || allFilteredDeals.find(l => l.id === id)
+        const lead = leads.find(l => l.id === id)
         if (!lead) continue
 
         const existingTags = (lead as any).tags || []
@@ -612,6 +660,30 @@ function LeadsPageContent() {
       setLoading(false)
     }
   }
+
+  const handleBulkOwnerChange = async (newOwnerId: string | null) => {
+    if (selectedLeadIds.length === 0) return
+    
+    setLoading(true)
+    try {
+      const { error } = await supabase
+        .from("deals")
+        .update({ owner_user_id: newOwnerId })
+        .in("id", selectedLeadIds)
+      
+      if (error) throw error
+
+      toast.success(`${selectedLeadIds.length} לידים שויכו בהצלחה`)
+      loadLeads()
+      setSelectedLeadIds([])
+    } catch (err) {
+      toast.error("שגיאה בשיוך הלידים")
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleBulkDelete = async () => {
     if (selectedLeadIds.length === 0) return
     if (!confirm(`האם אתה בטוח שברצונך למחוק ${selectedLeadIds.length} לידים?`)) return
@@ -646,6 +718,18 @@ function LeadsPageContent() {
 
   return (
     <div className="flex flex-col h-full gap-6 pb-20">
+      <Suspense fallback={null}>
+        <ContactDetailsSlider 
+          contactId={selectedContactId}
+          open={sliderOpen}
+          onOpenChange={setSliderOpen}
+          onActivityAdded={loadLeads}
+          canViewPhone={can("contacts", "view_phone")}
+          canViewEmail={can("contacts", "view_email")}
+          canViewSource={can("contacts", "view_source")}
+          canViewDealValue={can("deals", "view_value")}
+        />
+      </Suspense>
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div className="flex items-center gap-3">
@@ -662,10 +746,33 @@ function LeadsPageContent() {
             <Download className="h-3.5 w-3.5" />
             ייצוא לאקסל
           </Button>
-          <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2 h-10 px-5 rounded-lg shadow-lg shadow-primary/20 font-black text-xs">
-            <Plus className="h-4 w-4" />
-            הוסף ליד חדש
-          </Button>
+          {features.max_deals !== null && totalLeads >= features.max_deals ? (
+            <Button
+              disabled
+              variant="outline"
+              className="gap-2 h-10 px-5 rounded-lg font-black text-xs opacity-60 cursor-not-allowed"
+              title={`הגעת למגבלת המסלול שלך: ${features.max_deals} לידים`}
+            >
+              <Lock className="h-4 w-4" />
+              מגבלת לידים ({totalLeads}/{features.max_deals})
+            </Button>
+          ) : (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsCsvImportOpen(true)}
+                className="gap-2 h-10 px-4 rounded-lg font-black text-xs border-slate-200 shadow-sm"
+              >
+                <Upload className="h-4 w-4" />
+                ייבוא CSV
+              </Button>
+              <Button onClick={() => setIsAddDialogOpen(true)} className="gap-2 h-10 px-5 rounded-lg shadow-lg shadow-primary/20 font-black text-xs">
+                <Plus className="h-4 w-4" />
+                הוסף ליד חדש
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -1042,7 +1149,7 @@ function LeadsPageContent() {
                   setOwnerFilter("all")
                   setDateFrom("")
                   setDateTo("")
-                  setStatusFilter("active")
+                  setStatusFilter("all")
                   setSelectedTags([])
                 }}
               >
@@ -1061,179 +1168,191 @@ function LeadsPageContent() {
       </Sheet>
 
       {/* Main Content */}
-      <div className="flex-1 flex flex-col min-h-0">
-        {loading ? (
+      <div className="flex-1 flex flex-col min-h-0 relative">
+        {!hasLoadedInitially && loading ? (
           <div className="flex flex-col items-center justify-center h-64 gap-4 bg-white rounded-2xl border border-dashed border-slate-300">
             <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent" />
             <p className="text-slate-500 font-medium">טוען נתונים מהמערכת...</p>
           </div>
-        ) : viewMode === "table" ? (
-          <div className="flex flex-col flex-1 min-h-0">
-            <div className="flex-1 overflow-auto">
-              <LeadsTable 
-                leads={leads} 
-                onDelete={handleDeleteLead}
-                onEditSuccess={loadLeads}
-                selectedIds={selectedLeadIds}
-                onSelectionChange={setSelectedLeadIds}
-                allStages={allStages}
-                businessUsers={businessUsers}
-                isUsersLoading={isUsersLoading}
-                sortConfig={sortConfig}
-                onSort={handleSort}
-                visibleColumns={visibleColumns}
-                userRole={userRole}
-                canViewValue={can("deals", "view_value")}
-                canViewSource={can("deals", "view_source")}
-                canViewPhone={can("contacts", "view_phone")}
-                canViewEmail={can("contacts", "view_email")}
-                canViewContactSource={can("contacts", "view_source")}
-              />
-            </div>
-            
-            {/* Pagination Controls */}
-            <div className="mt-3 bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between shadow-sm">
-              <div className="flex items-center gap-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-slate-500 font-medium">שורות בעמוד:</span>
-                  <Select
-                    value={String(pageSize)}
-                    onValueChange={(val) => {
-                      setPageSize(Number(val))
-                      setCurrentPage(1)
-                    }}
-                  >
-                    <SelectTrigger className="w-16 h-8 bg-slate-50 border-slate-200 text-xs font-bold">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent className="text-right" dir="rtl">
-                      <SelectItem value="10" className="text-xs">10</SelectItem>
-                      <SelectItem value="25" className="text-xs">25</SelectItem>
-                      <SelectItem value="50" className="text-xs">50</SelectItem>
-                      <SelectItem value="100" className="text-xs">100</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <span className="text-xs text-slate-500 font-bold">
-                  {totalLeads > 0 ? (
-                    `מציג ${(currentPage - 1) * pageSize + 1} עד ${Math.min(currentPage * pageSize, totalLeads)} מתוך ${totalLeads}`
-                  ) : (
-                    "אין לידים להצגה"
-                  )}
-                </span>
-              </div>
-              
-              <div className="flex items-center gap-1.5">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 border-slate-200 rounded-lg hover:bg-slate-50"
-                  onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-                  disabled={currentPage === 1}
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-                
-                <div className="flex items-center gap-1 mx-1">
-                  {[...Array(Math.min(5, Math.ceil(totalLeads / pageSize)))].map((_, i) => {
-                    const pageNum = i + 1
-                    return (
-                      <Button
-                        key={pageNum}
-                        variant={currentPage === pageNum ? "default" : "ghost"}
-                        className={cn(
-                          "h-8 w-8 rounded-lg font-black text-xs transition-all",
-                          currentPage === pageNum ? "shadow-md shadow-primary/20" : "text-slate-500 hover:bg-slate-100"
-                        )}
-                        onClick={() => setCurrentPage(pageNum)}
-                      >
-                        {pageNum}
-                      </Button>
-                    )
-                  })}
-                </div>
-
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 border-slate-200 rounded-lg hover:bg-slate-50"
-                  onClick={() => setCurrentPage(prev => Math.min(Math.ceil(totalLeads / pageSize), prev + 1))}
-                  disabled={currentPage >= Math.ceil(totalLeads / pageSize)}
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </Button>
-              </div>
-            </div>
-          </div>
         ) : (
-          <div className="h-full animate-in fade-in duration-500">
-            {(statusFilter === "won" || statusFilter === "lost") ? (
-              <div className="flex flex-col items-center justify-center h-full bg-white rounded-2xl border border-dashed border-slate-300 gap-4 p-8 text-center">
-                <div className="bg-slate-50 p-6 rounded-full">
-                  <TableIcon className="h-12 w-12 text-slate-300" />
+          <div className={cn("flex-1 flex flex-col min-h-0 transition-opacity duration-300", loading && "opacity-60 pointer-events-none")}>
+            {viewMode === "table" ? (
+              <div className="flex-1 flex flex-col min-h-0">
+                <div className="flex-1 overflow-auto">
+                  <LeadsTable 
+                    leads={leads} 
+                    onDelete={handleDeleteLead}
+                    onEditSuccess={loadLeads}
+                    onContactClick={(id) => {
+                      setSelectedContactId(id)
+                      setSliderOpen(true)
+                    }}
+                    selectedIds={selectedLeadIds}
+                    onSelectionChange={setSelectedLeadIds}
+                    allStages={allStages}
+                    businessUsers={businessUsers}
+                    isUsersLoading={isUsersLoading}
+                    sortConfig={sortConfig}
+                    onSort={handleSort}
+                    visibleColumns={visibleColumns}
+                    userRole={userRole}
+                    canViewValue={can("deals", "view_value")}
+                    canViewSource={can("deals", "view_source")}
+                    canViewPhone={can("contacts", "view_phone")}
+                    canViewEmail={can("contacts", "view_email")}
+                    canViewContactSource={can("contacts", "view_source")}
+                  />
                 </div>
-                <div>
-                  <h3 className="text-xl font-bold text-slate-800">תצוגת פייפליין אינה זמינה לעסקאות סגורות</h3>
-                  <p className="text-slate-500 max-w-xs mx-auto mt-2">
-                    עסקאות שנסגרו או אבדו מוצגות בצורה הטובה ביותר בתצוגת טבלה כדי לצפות בהיסטוריה שלהן.
-                  </p>
+                
+                {/* Pagination Controls */}
+                <div className="mt-3 bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between shadow-sm">
+                  <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-slate-500 font-medium">שורות בעמוד:</span>
+                      <Select
+                        value={String(pageSize)}
+                        onValueChange={(val) => {
+                          setPageSize(Number(val))
+                          setCurrentPage(1)
+                        }}
+                      >
+                        <SelectTrigger className="w-16 h-8 bg-slate-50 border-slate-200 text-xs font-bold">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="text-right" dir="rtl">
+                          <SelectItem value="10" className="text-xs">10</SelectItem>
+                          <SelectItem value="25" className="text-xs">25</SelectItem>
+                          <SelectItem value="50" className="text-xs">50</SelectItem>
+                          <SelectItem value="100" className="text-xs">100</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <span className="text-xs text-slate-500 font-bold">
+                      {totalLeads > 0 ? (
+                        `מציג ${(currentPage - 1) * pageSize + 1} עד ${Math.min(currentPage * pageSize, totalLeads)} מתוך ${totalLeads}`
+                      ) : (
+                        "אין לידים להצגה"
+                      )}
+                    </span>
+                  </div>
+                  
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 border-slate-200 rounded-lg hover:bg-slate-50"
+                      onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                      disabled={currentPage === 1}
+                    >
+                      <ChevronRight className="h-3.5 w-3.5" />
+                    </Button>
+                    
+                    <div className="flex items-center gap-1 mx-1">
+                      {[...Array(Math.min(5, Math.ceil(totalLeads / pageSize)))].map((_, i) => {
+                        const pageNum = i + 1
+                        return (
+                          <Button
+                            key={pageNum}
+                            variant={currentPage === pageNum ? "default" : "ghost"}
+                            className={cn(
+                              "h-8 w-8 rounded-lg font-black text-xs transition-all",
+                              currentPage === pageNum ? "shadow-md shadow-primary/20" : "text-slate-500 hover:bg-slate-100"
+                            )}
+                            onClick={() => setCurrentPage(pageNum)}
+                          >
+                            {pageNum}
+                          </Button>
+                        )
+                      })}
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      className="h-8 w-8 border-slate-200 rounded-lg hover:bg-slate-50"
+                      onClick={() => setCurrentPage(prev => Math.min(Math.ceil(totalLeads / pageSize), prev + 1))}
+                      disabled={currentPage >= Math.ceil(totalLeads / pageSize)}
+                    >
+                      <ChevronLeft className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
                 </div>
-                <Button 
-                  onClick={() => updateViewMode("table")}
-                  variant="default"
-                  className="mt-4 rounded-xl shadow-lg"
-                >
-                  עבור לתצוגת טבלה
-                </Button>
               </div>
-            ) : selectedPipeline ? (
-              <KanbanBoard
-                pipelineId={selectedPipeline.id}
-                businessId={businessId!}
-                pipeline={selectedPipeline as any}
-                stages={selectedPipelineStages as any}
-                initialDeals={leads.filter(l => l.pipeline_id === selectedPipeline.id)}
-                canViewValue={can("deals", "view_value")}
-                canViewPhone={can("contacts", "view_phone")}
-                canViewEmail={can("contacts", "view_email")}
-                canViewContactSource={can("contacts", "view_source")}
-                key={`${selectedPipeline.id}-${searchTerm}`} // Force re-render when pipeline or search changes
-                onDealsChange={(updatedDeals) => {
-                  // Update the local leads state when board changes
-                  setLeads(prevLeads => {
-                    const otherLeads = prevLeads.filter(l => l.pipeline_id !== selectedPipeline.id)
-                    // We need to re-attach the details for the updated deals
-                    const updatedWithDetails = (updatedDeals as any[]).map(d => ({
-                      ...d,
-                      pipeline: selectedPipeline,
-                      stage: selectedPipelineStages.find(s => s.id === d.stage_id),
-                      contact: leads.find(l => l.contact_id === d.contact_id)?.contact || null
-                    }))
-                    return [...otherLeads, ...updatedWithDetails]
-                  })
-                }}
-                onDeleteDeal={handleDeleteLead}
-                selectedDealIds={selectedLeadIds}
-                onSelectionChange={setSelectedLeadIds}
-              />
             ) : (
-              <div className="flex flex-col items-center justify-center h-full bg-white rounded-2xl border border-dashed border-slate-300 gap-4 p-8 text-center">
-                <div className="bg-slate-50 p-6 rounded-full">
-                  <LayoutDashboard className="h-12 w-12 text-slate-300" />
-                </div>
-                <div>
-                  <h3 className="text-xl font-bold text-slate-800">יש לבחור פייפליין לתצוגת קאנבן</h3>
-                  <p className="text-slate-500 max-w-xs mx-auto mt-2">
-                    תצוגת קאנבן מחייבת בחירה של פייפליין ספציפי כדי להציג את השלבים המתאימים.
-                  </p>
-                </div>
-                <Button 
-                  onClick={() => setIsDropdownOpen(true)}
-                  variant="outline"
-                  className="mt-4 rounded-xl border-slate-200"
-                >
-                  בחר פייפליין מהרשימה
-                </Button>
+              <div className="h-full animate-in fade-in duration-500">
+                {(statusFilter === "won" || statusFilter === "lost") ? (
+                  <div className="flex flex-col items-center justify-center h-full bg-white rounded-2xl border border-dashed border-slate-300 gap-4 p-8 text-center">
+                    <div className="bg-slate-50 p-6 rounded-full">
+                      <TableIcon className="h-12 w-12 text-slate-300" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-800">תצוגת פייפליין אינה זמינה לעסקאות סגורות</h3>
+                      <p className="text-slate-500 max-w-xs mx-auto mt-2">
+                        עסקאות שנסגרו או אבדו מוצגות בצורה הטובה ביותר בתצוגת טבלה כדי לצפות בהיסטוריה שלהן.
+                      </p>
+                    </div>
+                    <Button 
+                      onClick={() => updateViewMode("table")}
+                      variant="default"
+                      className="mt-4 rounded-xl shadow-lg"
+                    >
+                      עבור לתצוגת טבלה
+                    </Button>
+                  </div>
+                ) : selectedPipeline ? (
+                  <Suspense fallback={<div className="flex items-center justify-center h-64"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>}>
+                    <KanbanBoard
+                      pipelineId={selectedPipeline.id}
+                      businessId={businessId!}
+                      pipeline={selectedPipeline as any}
+                      stages={selectedPipelineStages as any}
+                      initialDeals={leads.filter(l => l.pipeline_id === selectedPipeline.id)}
+                      canViewValue={can("deals", "view_value")}
+                      canViewPhone={can("contacts", "view_phone")}
+                      canViewEmail={can("contacts", "view_email")}
+                      canViewContactSource={can("contacts", "view_source")}
+                      onContactClick={(id) => {
+                        setSelectedContactId(id)
+                        setSliderOpen(true)
+                      }}
+                      key={`${selectedPipeline.id}-${searchTerm}`}
+                      onDealsChange={(updatedDeals) => {
+                        setLeads(prevLeads => {
+                          const otherLeads = prevLeads.filter(l => l.pipeline_id !== selectedPipeline.id)
+                          const updatedWithDetails = (updatedDeals as any[]).map(d => ({
+                            ...d,
+                            pipeline: selectedPipeline,
+                            stage: selectedPipelineStages.find(s => s.id === d.stage_id),
+                            contact: leads.find(l => l.contact_id === d.contact_id)?.contact || null
+                          }))
+                          return [...otherLeads, ...updatedWithDetails]
+                        })
+                      }}
+                      onDeleteDeal={handleDeleteLead}
+                      selectedDealIds={selectedLeadIds}
+                      onSelectionChange={setSelectedLeadIds}
+                    />
+                  </Suspense>
+                ) : (
+                  <div className="flex flex-col items-center justify-center h-full bg-white rounded-2xl border border-dashed border-slate-300 gap-4 p-8 text-center">
+                    <div className="bg-slate-50 p-6 rounded-full">
+                      <LayoutDashboard className="h-12 w-12 text-slate-300" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold text-slate-800">יש לבחור פייפליין לתצוגת קאנבן</h3>
+                      <p className="text-slate-500 max-w-xs mx-auto mt-2">
+                        תצוגת קאנבן מחייבת בחירה של פייפליין ספציפי כדי להציג את השלבים המתאימים.
+                      </p>
+                    </div>
+                    <Button 
+                      onClick={() => setIsDropdownOpen(true)}
+                      variant="outline"
+                      className="mt-4 rounded-xl border-slate-200"
+                    >
+                      בחר פייפליין מהרשימה
+                    </Button>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -1286,6 +1405,45 @@ function LeadsPageContent() {
                       ? "יש לבחור פייפליין אחד ספציפי כדי לשנות סטטוס גורף" 
                       : "יש לבחור פייפליין לשינוי סטטוס גורף"}
                   </div>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="bg-white/5 border-white/10 text-white hover:bg-white/10 h-10 px-4 rounded-xl gap-2 font-medium">
+                  <User className="h-4 w-4" />
+                  שיוך לנציג
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-[200px] text-right">
+                <DropdownMenuItem 
+                  className="cursor-pointer justify-start gap-2"
+                  onClick={() => handleBulkOwnerChange(null)}
+                >
+                  <div className="h-5 w-5 rounded-full bg-slate-100 flex items-center justify-center text-[10px] text-slate-500">
+                    <X className="h-3 w-3" />
+                  </div>
+                  ללא שיוך
+                </DropdownMenuItem>
+                <DropdownMenuSeparator className="bg-white/10" />
+                {isUsersLoading ? (
+                  <div className="p-2 text-xs text-slate-400 text-center italic">טוען נציגים...</div>
+                ) : businessUsers.length > 0 ? (
+                  businessUsers.map(user => (
+                    <DropdownMenuItem 
+                      key={user.id} 
+                      className="cursor-pointer justify-start gap-2"
+                      onClick={() => handleBulkOwnerChange(user.id)}
+                    >
+                      <div className="h-5 w-5 rounded-full bg-slate-100 flex items-center justify-center text-[10px] text-slate-500">
+                        {user.name?.charAt(0)}
+                      </div>
+                      {user.name}
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <div className="p-2 text-xs text-slate-400 text-center italic">אין נציגים זמינים</div>
                 )}
               </DropdownMenuContent>
             </DropdownMenu>
@@ -1371,6 +1529,27 @@ function LeadsPageContent() {
             setIsAddDialogOpen(false)
           }}
         />
+      )}
+
+      {pipelines.length > 0 && isCsvImportOpen && (
+        <Suspense fallback={null}>
+          <LeadCsvImportDialog
+            open={isCsvImportOpen}
+            onOpenChange={setIsCsvImportOpen}
+            pipelines={pipelines}
+            allStages={allStages}
+            defaultPipelineId={defaultPipelineId}
+            defaultStageId={defaultStageId}
+            defaultProductId={selectedPipeline?.product_id}
+            currentUserId={currentUser?.id ?? null}
+            maxDeals={features.max_deals}
+            currentDealCount={totalLeads}
+            onSuccess={() => {
+              loadLeads()
+              setIsCsvImportOpen(false)
+            }}
+          />
+        </Suspense>
       )}
     </div>
   )

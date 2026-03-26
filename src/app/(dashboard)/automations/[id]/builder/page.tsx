@@ -97,17 +97,28 @@ function BuilderInner() {
       setLoading(false)
       return
     }
+    if (auto.is_simple) {
+      router.replace(`/automations?simpleEdit=${automationId}`)
+      setLoading(false)
+      return
+    }
     setAutomation(auto)
     setName(auto.name)
 
-    const { data: pipelinesData } = await supabase
-      .from("pipelines")
-      .select("id, name")
-      .eq("business_id", businessId)
-      .order("name")
-    setPipelines((pipelinesData ?? []).map((p) => ({ id: p.id, name: p.name })))
+    // Fetch pipelines, credentials, nodes, and edges all in parallel
+    const [pipelinesResult, whatsappCredsResult, nodesResult, edgesResult] = await Promise.all([
+      supabase.from("pipelines").select("id, name").eq("business_id", businessId).order("name"),
+      supabase.from("whatsapp_credentials").select("id, name, provider").eq("business_id", businessId).order("name"),
+      supabase.from("automation_nodes").select("*").eq("automation_id", automationId),
+      supabase.from("automation_edges").select("*").eq("automation_id", automationId),
+    ])
 
-    const pipelineIds = (pipelinesData ?? []).map((p) => p.id)
+    const pipelinesData = pipelinesResult.data ?? []
+    setPipelines(pipelinesData.map((p) => ({ id: p.id, name: p.name })))
+    setWhatsappCredentials(whatsappCredsResult.data as any ?? [])
+
+    // Fetch stages only if there are pipelines (dependent on pipelines)
+    const pipelineIds = pipelinesData.map((p) => p.id)
     const { data: stagesData } = pipelineIds.length
       ? await supabase
           .from("stages")
@@ -117,21 +128,8 @@ function BuilderInner() {
       : { data: [] as { id: string; pipeline_id: string; name: string }[] }
     setStages((stagesData ?? []).map((s) => ({ id: s.id, pipeline_id: s.pipeline_id, name: s.name })))
 
-    const { data: whatsappCredsData } = await supabase
-      .from("whatsapp_credentials")
-      .select("id, name, provider")
-      .eq("business_id", businessId)
-      .order("name")
-    setWhatsappCredentials(whatsappCredsData as any ?? [])
-
-    const { data: nodesData } = await supabase
-      .from("automation_nodes")
-      .select("*")
-      .eq("automation_id", automationId)
-    const { data: edgesData } = await supabase
-      .from("automation_edges")
-      .select("*")
-      .eq("automation_id", automationId)
+    const nodesData = nodesResult.data
+    const edgesData = edgesResult.data
 
     const flowNodes: Node[] = (nodesData ?? []).map((n) => ({
       id: n.id,
@@ -165,7 +163,7 @@ function BuilderInner() {
     setNodes(flowNodes)
     setEdges(flowEdges)
     setLoading(false)
-  }, [automationId, businessId, setEdges, setNodes, supabase])
+  }, [automationId, businessId, router, setEdges, setNodes, supabase])
 
   useEffect(() => {
     load()
@@ -207,11 +205,11 @@ function BuilderInner() {
       const id = crypto.randomUUID()
       let subtype = subtypeInput
       if (!subtype) {
-        if (type === "trigger") subtype = "lead.created"
+        if (type === "trigger") subtype = "lead.stage_entered"
         else if (type === "condition") subtype = "condition.tag"
         else subtype = "send_whatsapp"
       }
-      
+
       let label = ""
       if (type === "trigger") label = TRIGGER_LABELS[subtype] ?? subtype
       else if (type === "action") label = ACTION_LABELS[subtype] ?? subtype
@@ -297,13 +295,16 @@ function BuilderInner() {
 
       await supabase.from("automation_edges").delete().eq("automation_id", automationId)
 
-      for (const e of edges) {
-        await supabase.from("automation_edges").insert({
-          automation_id: automationId,
-          from_node_id: e.source,
-          to_node_id: e.target,
-          branch_label: e.sourceHandle ?? null,
-        })
+      // Batch insert all edges in one request instead of one-by-one
+      if (edges.length > 0) {
+        await supabase.from("automation_edges").insert(
+          edges.map((e) => ({
+            automation_id: automationId,
+            from_node_id: e.source,
+            to_node_id: e.target,
+            branch_label: e.sourceHandle ?? null,
+          }))
+        )
       }
 
       toast.success("נשמר בהצלחה")
@@ -401,24 +402,21 @@ function BuilderInner() {
             </button>
             {expandedSections.triggers && (
               <div className="p-3 grid gap-2">
-                <Button variant="ghost" className="h-auto py-2.5 px-3 justify-start border border-slate-100 hover:border-amber-400 hover:bg-amber-50 group rounded-lg" onClick={() => addNode("trigger", "lead.created")}>
-                  <div className="bg-amber-100 text-amber-600 p-1.5 rounded-md mr-0 ml-3 group-hover:bg-amber-500 group-hover:text-white transition-colors">
-                    <Plus className="h-3.5 w-3.5" />
-                  </div>
-                  <span className="font-bold text-slate-700 text-xs">ליד חדש</span>
-                </Button>
-                <Button variant="ghost" className="h-auto py-2.5 px-3 justify-start border border-slate-100 hover:border-amber-400 hover:bg-amber-50 group rounded-lg" onClick={() => addNode("trigger", "contact.tag_added")}>
-                  <div className="bg-amber-100 text-amber-600 p-1.5 rounded-md mr-0 ml-3 group-hover:bg-amber-500 group-hover:text-white transition-colors">
-                    <Plus className="h-3.5 w-3.5" />
-                  </div>
-                  <span className="font-bold text-slate-700 text-xs">התווספה תגית</span>
-                </Button>
-                <Button variant="ghost" className="h-auto py-2.5 px-3 justify-start border border-slate-100 hover:border-amber-400 hover:bg-amber-50 group rounded-lg" onClick={() => addNode("trigger", "webhook.incoming")}>
-                  <div className="bg-amber-100 text-amber-600 p-1.5 rounded-md mr-0 ml-3 group-hover:bg-amber-500 group-hover:text-white transition-colors">
-                    <Plus className="h-3.5 w-3.5" />
-                  </div>
-                  <span className="font-bold text-slate-700 text-xs">Webhook נכנס</span>
-                </Button>
+                {([
+                  { subtype: "lead.created",       label: "ליד חדש נוצר" },
+                  { subtype: "lead.stage_entered",  label: "כניסה לסטייג'" },
+                  { subtype: "lead.won",            label: "ליד נסגר — זכייה" },
+                  { subtype: "lead.lost",           label: "ליד נסגר — הפסד" },
+                  { subtype: "contact.created",     label: "איש קשר חדש" },
+                  { subtype: "contact.tag_added",   label: "תגית נוספה לאיש קשר" },
+                ] as const).map(({ subtype, label }) => (
+                  <Button key={subtype} variant="ghost" className="h-auto py-2.5 px-3 justify-start border border-slate-100 hover:border-amber-400 hover:bg-amber-50 group rounded-lg" onClick={() => addNode("trigger", subtype)}>
+                    <div className="bg-amber-100 text-amber-600 p-1.5 rounded-md mr-0 ml-3 group-hover:bg-amber-500 group-hover:text-white transition-colors">
+                      <Plus className="h-3.5 w-3.5" />
+                    </div>
+                    <span className="font-bold text-slate-700 text-xs">{label}</span>
+                  </Button>
+                ))}
               </div>
             )}
           </section>
@@ -433,30 +431,23 @@ function BuilderInner() {
             </button>
             {expandedSections.actions && (
               <div className="p-3 grid gap-2">
-                <Button variant="ghost" className="h-auto py-2.5 px-3 justify-start border border-slate-100 hover:border-blue-400 hover:bg-blue-50 group rounded-lg" onClick={() => addNode("action", "send_whatsapp")}>
-                  <div className="bg-blue-100 text-blue-600 p-1.5 rounded-md mr-0 ml-3 group-hover:bg-blue-500 group-hover:text-white transition-colors">
-                    <Plus className="h-3.5 w-3.5" />
-                  </div>
-                  <span className="font-bold text-slate-700 text-xs">שליחת וואטסאפ</span>
-                </Button>
-                <Button variant="ghost" className="h-auto py-2.5 px-3 justify-start border border-slate-100 hover:border-emerald-400 hover:bg-emerald-50 group rounded-lg" onClick={() => addNode("action", "add_tag")}>
-                  <div className="bg-emerald-100 text-emerald-600 p-1.5 rounded-md mr-0 ml-3 group-hover:bg-emerald-500 group-hover:text-white transition-colors">
-                    <Plus className="h-3.5 w-3.5" />
-                  </div>
-                  <span className="font-bold text-slate-700 text-xs">הוספת תגית</span>
-                </Button>
-                <Button variant="ghost" className="h-auto py-2.5 px-3 justify-start border border-slate-100 hover:border-slate-400 hover:bg-slate-100 group rounded-lg" onClick={() => addNode("action", "delay")}>
-                  <div className="bg-slate-100 text-slate-600 p-1.5 rounded-md mr-0 ml-3 group-hover:bg-slate-500 group-hover:text-white transition-colors">
-                    <Plus className="h-3.5 w-3.5" />
-                  </div>
-                  <span className="font-bold text-slate-700 text-xs">השהייה (Delay)</span>
-                </Button>
-                <Button variant="ghost" className="h-auto py-2.5 px-3 justify-start border border-slate-100 hover:border-indigo-400 hover:bg-indigo-50 group rounded-lg" onClick={() => addNode("action", "update_field")}>
-                  <div className="bg-indigo-100 text-indigo-600 p-1.5 rounded-md mr-0 ml-3 group-hover:bg-indigo-500 group-hover:text-white transition-colors">
-                    <Plus className="h-3.5 w-3.5" />
-                  </div>
-                  <span className="font-bold text-slate-700 text-xs">עדכון שדה</span>
-                </Button>
+                {([
+                  { subtype: "send_whatsapp",       label: "שלח וואטסאפ",           btnCls: "hover:border-green-400 hover:bg-green-50",    icnCls: "bg-green-100 text-green-600 group-hover:bg-green-500" },
+                  { subtype: "move_to_stage",        label: "העברה לסטייג'",         btnCls: "hover:border-indigo-400 hover:bg-indigo-50",  icnCls: "bg-indigo-100 text-indigo-600 group-hover:bg-indigo-500" },
+                  { subtype: "update_lead_field",    label: "עדכן שדה של הליד",      btnCls: "hover:border-blue-400 hover:bg-blue-50",     icnCls: "bg-blue-100 text-blue-600 group-hover:bg-blue-500" },
+                  { subtype: "update_contact_field", label: "עדכן שדה של איש הקשר", btnCls: "hover:border-purple-400 hover:bg-purple-50", icnCls: "bg-purple-100 text-purple-600 group-hover:bg-purple-500" },
+                  { subtype: "add_tag",              label: "הוסף תגית לאיש קשר",   btnCls: "hover:border-emerald-400 hover:bg-emerald-50",icnCls: "bg-emerald-100 text-emerald-600 group-hover:bg-emerald-500" },
+                  { subtype: "remove_tag",           label: "הסר תגית מאיש קשר",    btnCls: "hover:border-rose-400 hover:bg-rose-50",     icnCls: "bg-rose-100 text-rose-600 group-hover:bg-rose-500" },
+                  { subtype: "delay",                label: "השהייה (Delay)",         btnCls: "hover:border-slate-400 hover:bg-slate-100",  icnCls: "bg-slate-100 text-slate-600 group-hover:bg-slate-500" },
+                  { subtype: "send_webhook",         label: "שליחת Webhook",         btnCls: "hover:border-amber-400 hover:bg-amber-50",   icnCls: "bg-amber-100 text-amber-600 group-hover:bg-amber-500" },
+                ] as const).map(({ subtype, label, btnCls, icnCls }) => (
+                  <Button key={subtype} variant="ghost" className={`h-auto py-2.5 px-3 justify-start border border-slate-100 group rounded-lg ${btnCls}`} onClick={() => addNode("action", subtype)}>
+                    <div className={`p-1.5 rounded-md mr-0 ml-3 group-hover:text-white transition-colors ${icnCls}`}>
+                      <Plus className="h-3.5 w-3.5" />
+                    </div>
+                    <span className="font-bold text-slate-700 text-xs">{label}</span>
+                  </Button>
+                ))}
               </div>
             )}
           </section>

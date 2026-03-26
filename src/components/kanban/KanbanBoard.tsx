@@ -1,18 +1,16 @@
 "use client"
 
-import { useState } from "react"
-import { DragDropContext, DropResult, DragStart, Droppable } from "@hello-pangea/dnd"
+import { useState, useEffect, useMemo, memo } from "react"
+import { DragDropContext, DropResult, Droppable } from "@hello-pangea/dnd"
 import { KanbanColumn } from "./KanbanColumn"
 import { QuickAddDealDialog } from "./QuickAddDealDialog"
 import { CloseDealWonDialog } from "./CloseDealWonDialog"
 import { createClient } from "@/lib/supabase/client"
-import { moveDealStage, runAutomations, triggerAutomationFlow } from "@/lib/services/crm"
+import { moveDealStage, runAutomations } from "@/lib/services/crm"
 import { toast } from "sonner"
-import { Trophy, Trash2, XCircle } from "lucide-react"
+import { Trophy, XCircle } from "lucide-react"
 import type { Database } from "@/types/database.types"
 import { cn } from "@/lib/utils"
-
-import { ContactDetailsSlider } from "@/components/contacts/ContactDetailsSlider"
 
 type Pipeline = Database["public"]["Tables"]["pipelines"]["Row"]
 type Stage = Database["public"]["Tables"]["stages"]["Row"]
@@ -32,6 +30,7 @@ interface KanbanBoardProps {
   canViewPhone?: boolean
   canViewEmail?: boolean
   canViewContactSource?: boolean
+  onContactClick?: (id: string) => void
 }
 
 export function KanbanBoard({
@@ -48,26 +47,47 @@ export function KanbanBoard({
   canViewPhone = true,
   canViewEmail = true,
   canViewContactSource = true,
+  onContactClick,
 }: KanbanBoardProps) {
   const [deals, setDeals] = useState<Deal[]>(initialDeals)
   const [quickAddStageId, setQuickAddStageId] = useState<string | null>(null)
+
+  const supabase = createClient()
+
+  // Fetch all pipeline deals on mount so won/lost stage columns show their deals too
+  useEffect(() => {
+    supabase
+      .from("deals")
+      .select("*")
+      .eq("pipeline_id", pipelineId)
+      .then(({ data }) => {
+        if (data) {
+          setDeals(data)
+          onDealsChange(data)
+        }
+      })
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pipelineId])
+
   const [wonDeal, setWonDeal] = useState<Deal | null>(null)
   const [isWonDialogOpen, setIsWonDialogOpen] = useState(false)
   const [isDragging, setIsDragging] = useState(false)
   
-  const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
-  const [sliderOpen, setSliderOpen] = useState(false)
-  
-  const supabase = createClient()
+  const regularStages = useMemo(() => stages.filter(s => !s.is_won && !s.is_lost), [stages])
+  const wonStages = useMemo(() => stages.filter(s => s.is_won), [stages])
+  const lostStages = useMemo(() => stages.filter(s => s.is_lost), [stages])
+  const wonStage = wonStages[0]
+  const lostStage = lostStages[0]
 
-  // הפרדת שלבים רגילים משלבי סיום
-  const regularStages = stages.filter(s => !s.is_won && !s.is_lost)
-  const wonStage = stages.find(s => s.is_won)
-  const lostStage = stages.find(s => s.is_lost)
-
-  const onDragStart = (start: DragStart) => {
-    setIsDragging(true)
-  }
+  // Memoize deal grouping by stage to avoid O(deals) filter per column per render
+  const dealsByStage = useMemo(() => {
+    const map = new Map<string, Deal[]>()
+    for (const deal of deals) {
+      if (!map.has(deal.stage_id)) map.set(deal.stage_id, [])
+      map.get(deal.stage_id)!.push(deal)
+    }
+    return map
+  }, [deals])
 
   const onDragEnd = async (result: DropResult) => {
     setIsDragging(false)
@@ -132,16 +152,8 @@ export function KanbanBoard({
         },
       }).catch(() => {})
 
-      if (newStageId === wonStage?.id) {
-        triggerAutomationFlow({
-          businessId,
-          triggerSubtype: "deal.won",
-          entityType: "deal",
-          entityId: draggableId,
-          payload: { pipeline_id: pipelineId },
-        })
-        toast.success("כל הכבוד! העיסקה נסגרה בהצלחה 🎉")
-      } else if (newStageId === lostStage?.id) toast.error("העיסקה סומנה כהפסד")
+      // גרירה ל-Won נעצרת למעלה בדיאלוג; כאן לא מגיעים ל-wonStage. lead.won / lead.lost נורים מ-moveDealStage.
+      if (newStageId === lostStage?.id) toast.error("העיסקה סומנה כהפסד")
       else toast.success("העיסקה הועברה")
     } catch (error) {
       // 3. במידה ונכשלה הפעולה, מחזירים את המצב לקדמותו
@@ -165,29 +177,17 @@ export function KanbanBoard({
   }
 
   const handleContactClick = (contactId: string) => {
-    setSelectedContactId(contactId)
-    setSliderOpen(true)
+    onContactClick?.(contactId)
   }
 
   return (
     <div className="relative h-full flex flex-col min-h-0">
-      <ContactDetailsSlider 
-        contactId={selectedContactId}
-        open={sliderOpen}
-        onOpenChange={setSliderOpen}
-        onActivityAdded={handleDealsRefresh}
-        canViewPhone={canViewPhone}
-        canViewEmail={canViewEmail}
-        canViewSource={canViewContactSource}
-        canViewDealValue={canViewValue}
-      />
       <QuickAddDealDialog
         open={quickAddStageId !== null}
         onOpenChange={(open) => setQuickAddStageId(open ? quickAddStageId : null)}
         pipelineId={pipelineId}
         stageId={quickAddStageId ?? ""}
         onSuccess={handleDealsRefresh}
-        // @ts-ignore
         defaultProductId={pipeline.product_id}
       />
       <CloseDealWonDialog
@@ -195,7 +195,6 @@ export function KanbanBoard({
         onOpenChange={setIsWonDialogOpen}
         deal={wonDeal}
         businessId={businessId}
-        pipelineId={pipelineId}
         wonStageId={wonStage?.id ?? ""}
         onSuccess={() => {
           handleDealsRefresh()
@@ -206,13 +205,13 @@ export function KanbanBoard({
           setIsWonDialogOpen(false)
         }}
       />
-      <DragDropContext onDragStart={onDragStart} onDragEnd={onDragEnd}>
+      <DragDropContext onDragStart={() => setIsDragging(true)} onDragEnd={onDragEnd}>
         <div className="flex gap-6 overflow-x-auto pb-4 h-full items-start scrollbar-hide flex-1 min-h-0">
           {regularStages.map((stage) => (
             <KanbanColumn
               key={stage.id}
               stage={stage}
-              deals={deals.filter((d) => d.stage_id === stage.id)}
+              deals={dealsByStage.get(stage.id) ?? []}
               onQuickAdd={() => setQuickAddStageId(stage.id)}
               onDeleteDeal={onDeleteDeal}
               onEditSuccess={handleDealsRefresh}
@@ -222,6 +221,41 @@ export function KanbanBoard({
               canViewValue={canViewValue}
             />
           ))}
+
+          {/* Separator before won/lost stages */}
+          {(wonStages.length > 0 || lostStages.length > 0) && (
+            <div className="flex items-start gap-6 shrink-0">
+              <div className="w-px self-stretch bg-border/60 mt-2" />
+              {wonStages.map((stage) => (
+                <KanbanColumn
+                  key={stage.id}
+                  stage={stage}
+                  deals={dealsByStage.get(stage.id) ?? []}
+                  onQuickAdd={() => setQuickAddStageId(stage.id)}
+                  onDeleteDeal={onDeleteDeal}
+                  onEditSuccess={handleDealsRefresh}
+                  selectedDealIds={selectedDealIds}
+                  onSelectionChange={onSelectionChange}
+                  onContactClick={handleContactClick}
+                  canViewValue={canViewValue}
+                />
+              ))}
+              {lostStages.map((stage) => (
+                <KanbanColumn
+                  key={stage.id}
+                  stage={stage}
+                  deals={dealsByStage.get(stage.id) ?? []}
+                  onQuickAdd={() => setQuickAddStageId(stage.id)}
+                  onDeleteDeal={onDeleteDeal}
+                  onEditSuccess={handleDealsRefresh}
+                  selectedDealIds={selectedDealIds}
+                  onSelectionChange={onSelectionChange}
+                  onContactClick={handleContactClick}
+                  canViewValue={canViewValue}
+                />
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Bottom Won/Lost Zones */}

@@ -44,6 +44,8 @@ import {
 } from "lucide-react"
 import { createClient } from "@/lib/supabase/client"
 import { useBusiness } from "@/lib/hooks/useBusiness"
+import { useTierFeatures } from "@/lib/hooks/useTierFeatures"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { cn } from "@/lib/utils"
@@ -54,6 +56,8 @@ type ViewType = "month" | "week" | "day"
 
 export default function CalendarPage() {
   const { businessId } = useBusiness()
+  const { features, loading: featuresLoading } = useTierFeatures()
+  const router = useRouter()
   const [currentDate, setCurrentDate] = useState(new Date())
   const [appointments, setAppointments] = useState<any[]>([])
   const [filter, setFilter] = useState<"my" | "all">("my")
@@ -97,6 +101,47 @@ export default function CalendarPage() {
   useEffect(() => {
     loadAppointments()
   }, [businessId, filter])
+
+  useEffect(() => {
+    if (!featuresLoading && !features.booking) {
+      router.replace("/dashboard")
+    }
+  }, [features.booking, featuresLoading, router])
+
+  if (!featuresLoading && !features.booking) return null
+
+  if (loading) {
+    return (
+      <div className="max-w-7xl mx-auto w-full p-4 lg:p-0 pb-12 space-y-6" dir="rtl">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+          <div className="h-9 w-48 bg-muted rounded animate-pulse" />
+          <div className="flex gap-2">
+            <div className="h-10 w-24 bg-muted rounded-xl animate-pulse" />
+            <div className="h-10 w-8 bg-muted rounded-xl animate-pulse" />
+            <div className="h-10 w-8 bg-muted rounded-xl animate-pulse" />
+          </div>
+        </div>
+        <div className="bg-white rounded-3xl border border-slate-200 overflow-hidden shadow-sm">
+          <div className="grid grid-cols-7 border-b border-slate-200">
+            {Array.from({ length: 7 }).map((_, i) => (
+              <div key={i} className="p-4 text-center">
+                <div className="h-4 w-8 bg-muted rounded animate-pulse mx-auto" />
+              </div>
+            ))}
+          </div>
+          {Array.from({ length: 5 }).map((_, week) => (
+            <div key={week} className="grid grid-cols-7 border-b border-slate-100 last:border-0">
+              {Array.from({ length: 7 }).map((_, day) => (
+                <div key={day} className="min-h-[100px] p-2 border-l border-slate-100 first:border-0 space-y-1">
+                  <div className="h-5 w-5 rounded-full bg-muted animate-pulse" />
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
 
   const next = () => {
     if (view === "month") setCurrentDate(addMonths(currentDate, 1))

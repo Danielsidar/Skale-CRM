@@ -1,11 +1,13 @@
 "use client"
 
 import { useEffect, useState, useMemo } from "react"
+import { useRouter } from "next/navigation"
 import { useBusiness } from "@/lib/hooks/useBusiness"
+import { useTierFeatures } from "@/lib/hooks/useTierFeatures"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { ArrowRight, Terminal, Copy, Check, Zap, Info, FileCode, Code, Key, Plus, Trash2, Eye, EyeOff } from "lucide-react"
+import { ArrowRight, Terminal, Copy, Check, Zap, Info, FileCode, Code, Key, Plus, Trash2, Eye, EyeOff, Lock } from "lucide-react"
 import { toast } from "sonner"
 import { getApiKeys, createApiKey, deleteApiKey } from "@/lib/services/api-keys"
 import { createClient } from "@/lib/supabase/client"
@@ -42,10 +44,13 @@ const ENDPOINTS = [
   { id: "create_customer", name: "הוספת לקוח חדש", method: "POST", path: "/api/v1/customers" },
   { id: "create_product", name: "הוספת מוצר חדש", method: "POST", path: "/api/v1/products" },
   { id: "list_customers", name: "רשימת לקוחות", method: "GET", path: "/api/v1/customers" },
+  { id: "add_timeline_note", name: "הוספת הודעה לטיימליין", method: "POST", path: "/api/v1/contacts/timeline" },
 ]
 
 export default function ApiPage() {
   const { businessId } = useBusiness()
+  const { features, loading: featuresLoading } = useTierFeatures()
+  const router = useRouter()
   const [keys, setKeys] = useState<any[]>([])
   const [pipelines, setPipelines] = useState<any[]>([])
   const [stages, setStages] = useState<any[]>([])
@@ -62,6 +67,7 @@ export default function ApiPage() {
   })
   const [copied, setCopied] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [activeCodeTab, setActiveCodeTab] = useState("curl")
 
   // API Key Management State
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
@@ -179,6 +185,12 @@ export default function ApiPage() {
         description: params.description || "תיאור המוצר",
         price: Number(params.price || 0),
       }
+    } else if (selectedEndpoint.id === "add_timeline_note") {
+      bodyObj = {
+        contact_email: params.email || "israel@example.com",
+        type: params.activity_type || "note",
+        content: params.activity_content || "תוכן ההודעה",
+      }
     }
 
     const jsonBody = JSON.stringify(bodyObj, null, 2)
@@ -211,7 +223,111 @@ export default function ApiPage() {
 .then(res => res.json())
 .then(console.log);`
 
-    return { curl, javascript }
+    const makeModuleObj = {
+      subflows: [
+        {
+          flow: [
+            {
+              id: 1,
+              module: "http:MakeRequest",
+              version: 4,
+              parameters: {
+                authenticationType: "noAuth",
+                tlsType: "",
+                proxyKeychain: "",
+              },
+              mapper: {
+                url,
+                method: selectedEndpoint.method.toLowerCase(),
+                headers: [
+                  { name: "Authorization", value: `Bearer ${apiKey}` },
+                  { name: "Content-Type", value: "application/json" },
+                ],
+                contentType: "json",
+                parseResponse: true,
+                stopOnHttpError: true,
+                allowRedirects: true,
+                shareCookies: false,
+                requestCompressedContent: true,
+                inputMethod: "jsonString",
+                jsonStringBodyContent: JSON.stringify(bodyObj, null, 2),
+              },
+              metadata: {
+                designer: { x: 0, y: 0 },
+                restore: {
+                  parameters: {
+                    authenticationType: { label: "No authenticationUse when no credentials are required for the request." },
+                    tlsType: { label: "Empty" },
+                    proxyKeychain: { label: "Choose a key" },
+                  },
+                  expect: {
+                    method: { mode: "chose", label: selectedEndpoint.method },
+                    headers: { mode: "chose", items: [null] },
+                    queryParameters: { mode: "chose" },
+                    contentType: { label: "application/jsonEnter data in the JSON format, as a string or using a data structure." },
+                    parseResponse: { mode: "chose" },
+                    stopOnHttpError: { mode: "chose" },
+                    allowRedirects: { mode: "chose" },
+                    shareCookies: { mode: "chose" },
+                    requestCompressedContent: { mode: "chose" },
+                    inputMethod: { label: "JSON stringEnter the JSON body as a raw text string. If values contain JSON reserved characters, you must escape them manually." },
+                    paginationType: { label: "Empty" },
+                  },
+                },
+                parameters: [
+                  { name: "authenticationType", type: "select", label: "Authentication type", required: true, validate: { enum: ["noAuth", "apiKey", "basicAuth", "oAuth"] } },
+                  { name: "tlsType", type: "select", label: "Transport layer security (TLS)", validate: { enum: ["mTls", "tls"] } },
+                  { name: "proxyKeychain", type: "keychain:proxy", label: "Proxy" },
+                ],
+                expect: [
+                  { name: "url", type: "url", label: "URL", required: true },
+                  { name: "method", type: "select", label: "Method", required: true, validate: { enum: ["get", "head", "post", "put", "patch", "delete", "options"] } },
+                  { name: "headers", type: "array", label: "Headers", spec: { name: "value", label: "Header", type: "collection", spec: [{ name: "name", label: "Name", type: "text", required: true, validate: { pattern: "^[-!#$%&'*+.^_`|~0-9A-Za-z]+$" } }, { name: "value", label: "Value", type: "text" }] } },
+                  { name: "queryParameters", type: "array", label: "Query parameters", spec: { name: "value", label: "Parameter", type: "collection", spec: [{ name: "name", label: "Name", type: "text", required: true }, { name: "value", label: "Value", type: "text" }] } },
+                  { name: "contentType", type: "select", label: "Body content type", validate: { enum: ["json", "multipart", "urlEncoded", "custom"] } },
+                  { name: "parseResponse", type: "boolean", label: "Parse response", required: true },
+                  { name: "stopOnHttpError", type: "boolean", label: "Return error if HTTP request fails", required: true },
+                  { name: "timeout", type: "uinteger", label: "Timeout", validate: { min: 1, max: 300 } },
+                  { name: "allowRedirects", type: "boolean", label: "Allow redirects", required: true },
+                  { name: "shareCookies", type: "boolean", label: "Share cookies with other HTTP modules", required: true },
+                  { name: "requestCompressedContent", type: "boolean", label: "Request compressed content", required: true },
+                  { name: "inputMethod", type: "select", label: "Body input method", required: true, validate: { enum: ["dataStructure", "jsonString"] } },
+                  { name: "jsonStringBodyContent", type: "text", label: "Body content", required: true },
+                  { name: "paginationType", type: "select", label: "Pagination type", validate: { enum: ["offsetBased", "pageBased", "urlBased", "tokenBased"] } },
+                ],
+                interface: [
+                  { name: "data", label: "Data", type: "any" },
+                  { name: "statusCode", label: "Status Code", type: "number" },
+                  { name: "headers", label: "Headers", type: "collection", spec: [{ name: "content-length", label: "Content-Length", type: "text" }, { name: "content-encoding", label: "Content-Encoding", type: "text" }, { name: "content-type", label: "Content-Type", type: "text" }, { name: "server", label: "Server", type: "text" }, { name: "cache-control", label: "Cache-Control", type: "text" }, { name: "set-cookie", label: "Set-Cookie", type: "array", spec: { type: "text" } }] },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+      metadata: {
+        version: 1,
+        scenario: {
+          roundtrips: 1,
+          maxErrors: 3,
+          autoCommit: true,
+          autoCommitTriggerLast: true,
+          sequential: false,
+          slots: null,
+          confidential: false,
+          dataloss: false,
+          dlq: false,
+          freshVariables: false,
+        },
+        designer: { orphans: [] },
+        zone: "eu2.make.com",
+        notes: [],
+      },
+    }
+
+    const make = JSON.stringify(makeModuleObj, null, 2)
+
+    return { curl, javascript, make }
   }, [selectedEndpoint, selectedKey, params, baseUrl])
 
   const copyToClipboard = (text: string, type: 'code' | 'key') => {
@@ -229,6 +345,14 @@ export default function ApiPage() {
   // API Key Actions
   async function handleCreateKey() {
     if (!newKeyName || !businessId) return
+    if (!features.api_access) {
+      toast.error("גישת API לא זמינה במסלול שלך")
+      return
+    }
+    if (features.max_api_keys !== null && keys.length >= features.max_api_keys) {
+      toast.error(`הגעת למגבלת מפתחות ה-API (${features.max_api_keys})`)
+      return
+    }
     try {
       setIsCreating(true)
       const result = await createApiKey(newKeyName, businessId)
@@ -255,7 +379,13 @@ export default function ApiPage() {
     }
   }
 
-  if (!businessId) return null
+  useEffect(() => {
+    if (!featuresLoading && !features.api_access) {
+      router.replace("/dashboard")
+    }
+  }, [features.api_access, featuresLoading, router])
+
+  if (!businessId || (!featuresLoading && !features.api_access)) return null
 
   return (
     <div className="space-y-8 pb-12" dir="rtl">
@@ -263,6 +393,16 @@ export default function ApiPage() {
         <h1 className="text-2xl font-black tracking-tight text-slate-900">מרכז ה-API</h1>
         <p className="text-slate-500 text-sm font-medium">ניהול מפתחות, דוקומנטציה ומחולל קוד במקום אחד</p>
       </div>
+
+      {features.max_api_keys !== null && keys.length >= features.max_api_keys && (
+        <div className="flex items-center gap-3 rounded-xl border border-orange-200 bg-orange-50 p-4 text-orange-800">
+          <Lock className="h-5 w-5 shrink-0 text-orange-600" />
+          <div>
+            <p className="font-bold text-sm">הגעת למגבלת מפתחות ה-API ({keys.length}/{features.max_api_keys})</p>
+            <p className="text-xs mt-0.5 text-orange-700">שדרג את המסלול שלך כדי ליצור מפתחות נוספים.</p>
+          </div>
+        </div>
+      )}
 
       <Tabs defaultValue="docs" className="w-full">
         <TabsList className="mb-8 bg-slate-100 p-1">
@@ -451,6 +591,48 @@ export default function ApiPage() {
                       </div>
                     </div>
                   )}
+
+                  {selectedEndpoint.id === "add_timeline_note" && (
+                    <div className="space-y-4 pt-4 border-t border-slate-100">
+                      <div className="space-y-2">
+                        <Label className="text-slate-700 font-bold">אימייל איש קשר</Label>
+                        <Input
+                          value={params.email || ""}
+                          onChange={e => setParams(p => ({ ...p, email: e.target.value }))}
+                          className="bg-slate-50 border-slate-200 focus:bg-white transition-all text-left"
+                          dir="ltr"
+                          placeholder="israel@example.com"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-slate-700 font-bold">סוג פעילות</Label>
+                        <Select
+                          value={params.activity_type || "note"}
+                          onValueChange={v => setParams(p => ({ ...p, activity_type: v }))}
+                        >
+                          <SelectTrigger className="bg-slate-50 border-slate-200 focus:bg-white transition-all">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent dir="rtl">
+                            <SelectItem value="note">הערה</SelectItem>
+                            <SelectItem value="call">שיחה</SelectItem>
+                            <SelectItem value="email">מייל</SelectItem>
+                            <SelectItem value="meeting">פגישה</SelectItem>
+                            <SelectItem value="message">הודעה</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label className="text-slate-700 font-bold">תוכן</Label>
+                        <Input
+                          value={params.activity_content || ""}
+                          onChange={e => setParams(p => ({ ...p, activity_content: e.target.value }))}
+                          className="bg-slate-50 border-slate-200 focus:bg-white transition-all"
+                          placeholder="תוכן ההודעה..."
+                        />
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             </div>
@@ -468,7 +650,7 @@ export default function ApiPage() {
                       <code className="text-sm font-mono font-bold text-slate-600 bg-white border border-slate-200 px-2 py-1 rounded-md" dir="ltr">{selectedEndpoint.path}</code>
                     </div>
                     <div className="flex items-center gap-2">
-                      <Button variant="outline" size="sm" onClick={() => copyToClipboard(snippets.curl, 'code')} className="h-9 gap-2 border-slate-200 font-bold">
+                      <Button variant="outline" size="sm" onClick={() => copyToClipboard(activeCodeTab === "make" ? snippets.make : activeCodeTab === "js" ? snippets.javascript : snippets.curl, 'code')} className="h-9 gap-2 border-slate-200 font-bold">
                         {copied ? <Check className="h-4 w-4 text-emerald-600" /> : <Copy className="h-4 w-4 text-slate-400" />}
                         {copied ? "הועתק!" : "העתק קוד"}
                       </Button>
@@ -476,11 +658,12 @@ export default function ApiPage() {
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
-                  <Tabs defaultValue="curl" className="w-full">
+                  <Tabs defaultValue="curl" className="w-full" onValueChange={setActiveCodeTab}>
                     <div className="px-4 border-b border-slate-100 bg-slate-50/30">
                       <TabsList className="h-12 bg-transparent gap-6">
                         <TabsTrigger value="curl" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none font-bold text-slate-500 data-[state=active]:text-primary">cURL</TabsTrigger>
                         <TabsTrigger value="js" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none font-bold text-slate-500 data-[state=active]:text-primary">JavaScript</TabsTrigger>
+                        <TabsTrigger value="make" className="data-[state=active]:bg-transparent data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none font-bold text-slate-500 data-[state=active]:text-primary">Make Module</TabsTrigger>
                       </TabsList>
                     </div>
                     <TabsContent value="curl" className="m-0">
@@ -491,6 +674,11 @@ export default function ApiPage() {
                     <TabsContent value="js" className="m-0">
                       <pre className="p-6 text-[13px] font-mono overflow-auto bg-slate-900 text-slate-100 min-h-[250px] text-left ltr selection:bg-primary/30 scrollbar-thin scrollbar-thumb-slate-700">
                         {snippets.javascript}
+                      </pre>
+                    </TabsContent>
+                    <TabsContent value="make" className="m-0">
+                      <pre className="p-6 text-[13px] font-mono overflow-auto bg-slate-900 text-slate-100 min-h-[250px] text-left ltr selection:bg-primary/30 scrollbar-thin scrollbar-thumb-slate-700">
+                        {snippets.make}
                       </pre>
                     </TabsContent>
                   </Tabs>
@@ -554,8 +742,16 @@ export default function ApiPage() {
                 <CardTitle className="text-lg font-bold text-slate-800">מפתחות פעילים</CardTitle>
                 <CardDescription className="font-medium text-slate-500">נהל את מפתחות הגישה של העסק שלך</CardDescription>
               </div>
-              <Button onClick={() => setIsCreateDialogOpen(true)} className="gap-2 font-bold h-10 px-5 shadow-sm">
-                <Plus className="h-4 w-4" />
+              <Button
+                onClick={() => {
+                  if (!features.api_access) { toast.error("גישת API לא זמינה במסלול שלך"); return }
+                  if (features.max_api_keys !== null && keys.length >= features.max_api_keys) { toast.error(`הגעת למגבלת מפתחות ה-API (${features.max_api_keys})`); return }
+                  setIsCreateDialogOpen(true)
+                }}
+                className="gap-2 font-bold h-10 px-5 shadow-sm"
+                disabled={!features.api_access || (features.max_api_keys !== null && keys.length >= features.max_api_keys)}
+              >
+                {(!features.api_access || (features.max_api_keys !== null && keys.length >= features.max_api_keys)) ? <Lock className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
                 מפתח חדש
               </Button>
             </CardHeader>

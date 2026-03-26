@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useBusiness } from "@/lib/hooks/useBusiness"
+import { useProductsQuery } from "@/lib/hooks/queries"
 import { createDeal, createContact, updateDeal } from "@/lib/services/crm"
 import {
   Dialog,
@@ -68,21 +69,23 @@ export function QuickAddDealDialog({
   const [title, setTitle] = useState(deal?.title || "")
   const [isTitleDirty, setIsTitleDirty] = useState(!!deal)
   const [value, setValue] = useState(deal?.value?.toString() || "")
-  const [contactMode, setContactMode] = useState<"existing" | "new">("existing")
   const [contactId, setContactId] = useState<string>(deal?.contact_id || "")
   const [productId, setProductId] = useState<string>(deal?.product_id || "none")
   const [tags, setTags] = useState(deal?.tags?.join(", ") || "")
   const [loading, setLoading] = useState(false)
   const [contacts, setContacts] = useState<Contact[]>([])
-  const [products, setProducts] = useState<Product[]>([])
+  const [showContactSuggestions, setShowContactSuggestions] = useState(false)
   
-  // New contact fields
-  const [newContactName, setNewContactName] = useState("")
-  const [newContactEmail, setNewContactEmail] = useState("")
-  const [newContactPhone, setNewContactPhone] = useState("")
+  // Unified contact fields
+  const [contactName, setContactName] = useState("")
+  const [contactEmail, setContactEmail] = useState("")
+  const [contactPhone, setContactPhone] = useState("")
   
   const supabase = createClient()
   const { businessId } = useBusiness()
+  // Use cached products query instead of fetching on every dialog open
+  const { data: productsData } = useProductsQuery(businessId)
+  const products = (productsData ?? []) as Product[]
 
   useEffect(() => {
     if (open) {
@@ -93,7 +96,22 @@ export function QuickAddDealDialog({
         setContactId(deal.contact_id || "")
         setProductId(deal.product_id || "none")
         setTags(deal.tags?.join(", ") || "")
-        setContactMode("existing")
+        
+        // Fetch contact details if editing
+        if (deal.contact_id) {
+          supabase
+            .from("contacts")
+            .select("*")
+            .eq("id", deal.contact_id)
+            .single()
+            .then(res => {
+              if (res.data) {
+                setContactName(res.data.full_name)
+                setContactEmail(res.data.email || "")
+                setContactPhone(res.data.phone || "")
+              }
+            })
+        }
       } else {
         resetForm()
       }
@@ -104,35 +122,18 @@ export function QuickAddDealDialog({
     if (isTitleDirty && !deal) return // Don't auto-set if title was manual (only for new)
     if (deal) return // Don't auto-set if editing
 
-    if (contactMode === "existing") {
-      if (contactId) {
-        const contact = contacts.find(c => c.id === contactId)
-        if (contact) {
-          setTitle(contact.full_name)
-        }
-      } else {
-        setTitle("")
-      }
-    } else {
-      setTitle(newContactName)
-    }
-  }, [contactMode, contactId, newContactName, contacts, isTitleDirty, deal])
+    setTitle(contactName)
+  }, [contactName, isTitleDirty, deal])
 
   useEffect(() => {
     if (open && businessId) {
+      // Only fetch contacts (products are now cached via useProductsQuery)
       supabase
         .from("contacts")
-        .select("*")
+        .select("id, full_name, email, phone")
         .eq("business_id", businessId)
         .order("full_name")
-        .then((res) => setContacts(res.data || []))
-
-      supabase
-        .from("products")
-        .select("*")
-        .eq("business_id", businessId)
-        .order("name")
-        .then((res) => setProducts(res.data || []))
+        .then((res) => setContacts(res.data as any || []))
     }
   }, [open, businessId])
 
@@ -162,7 +163,7 @@ export function QuickAddDealDialog({
     e.preventDefault()
     if (!businessId || !title.trim()) return
     
-    if (contactMode === "new" && !newContactName.trim()) {
+    if (!contactName.trim()) {
       toast.error("נא להזין שם איש קשר")
       return
     }
@@ -172,26 +173,24 @@ export function QuickAddDealDialog({
       const { data: { user } } = await supabase.auth.getUser()
       if (!user) throw new Error("לא מחובר")
 
-      let finalContactId = !contactId ? null : contactId
-
-      if (contactMode === "new") {
-        const contactResult = await createContact(supabase, {
-          business_id: businessId,
-          full_name: newContactName.trim(),
-          email: newContactEmail.trim() || null,
-          phone: newContactPhone.trim() || null,
-          owner_user_id: user.id,
-        })
-        if (contactResult.error) throw new Error(contactResult.error)
-        finalContactId = contactResult.data!.id
-      }
+      // Always call createContact - it handles existing contact check by email/phone
+      const contactResult = await createContact(supabase, {
+        business_id: businessId,
+        full_name: contactName.trim(),
+        email: contactEmail.trim() || null,
+        phone: contactPhone.trim() || null,
+        owner_user_id: user.id,
+      })
+      
+      if (contactResult.error) throw new Error(contactResult.error)
+      const finalContactId = contactResult.data!.id
 
       if (deal) {
         // Edit mode
         const editResult = await updateDeal(supabase, deal.id, {
           title: title.trim(),
           value: value ? Number(value) : 0,
-          contact_id: finalContactId === "none" ? null : finalContactId,
+          contact_id: finalContactId,
           product_id: productId === "none" ? null : productId,
           tags: tags.split(",").map(t => t.trim()).filter(Boolean),
         })
@@ -231,10 +230,10 @@ export function QuickAddDealDialog({
     setContactId("")
     setProductId("none")
     setTags("")
-    setNewContactName("")
-    setNewContactEmail("")
-    setNewContactPhone("")
-    setContactMode("existing")
+    setContactName("")
+    setContactEmail("")
+    setContactPhone("")
+    setShowContactSuggestions(false)
   }
 
   return (
@@ -308,99 +307,88 @@ export function QuickAddDealDialog({
               <h3 className="font-bold text-slate-800 text-sm">פרטי איש קשר</h3>
             </div>
 
-            <Tabs value={contactMode} onValueChange={(v) => setContactMode(v as any)} className="w-full" dir="rtl">
-              <TabsList className="grid w-full grid-cols-2 bg-slate-100/80 p-1 rounded-xl h-10 mb-4">
-                <TabsTrigger 
-                  value="existing" 
-                  className="gap-2 data-[state=active]:bg-white data-[state=active]:text-primary data-[state=active]:shadow-sm rounded-lg transition-all font-bold text-xs text-slate-500"
-                >
-                  <Users className="h-3.5 w-3.5" />
-                  קיים
-                </TabsTrigger>
-                <TabsTrigger 
-                  value="new" 
-                  className="gap-2 data-[state=active]:bg-white data-[state=active]:text-primary data-[state=active]:shadow-sm rounded-lg transition-all font-bold text-xs text-slate-500"
-                >
-                  <UserPlus className="h-3.5 w-3.5" />
-                  חדש
-                </TabsTrigger>
-              </TabsList>
+            <div className="space-y-3">
+              <div className="space-y-1.5 relative">
+                <Label className="text-xs font-bold text-slate-700">שם מלא *</Label>
+                <div className="relative">
+                  <User className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <Input
+                    value={contactName}
+                    onChange={(e) => {
+                      setContactName(e.target.value)
+                      setShowContactSuggestions(true)
+                      setContactId("") // Clear contact ID if name is changed manually
+                    }}
+                    onFocus={() => setShowContactSuggestions(true)}
+                    onBlur={() => {
+                      // Small delay to allow clicking the suggestion
+                      setTimeout(() => setShowContactSuggestions(false), 200)
+                    }}
+                    placeholder="הקלד שם לחיפוש או יצירה..."
+                    className="pr-10 h-10 bg-white border-slate-200 rounded-xl shadow-sm font-medium text-sm"
+                  />
+                </div>
+
+                {/* Suggestions List */}
+                {showContactSuggestions && contactName.length > 0 && (
+                  <div className="absolute z-50 top-full left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-xl max-h-[200px] overflow-auto animate-in fade-in slide-in-from-top-2 duration-200">
+                    {contacts
+                      .filter(c => c.full_name.toLowerCase().includes(contactName.toLowerCase()))
+                      .map(c => (
+                        <button
+                          key={c.id}
+                          type="button"
+                          className="w-full text-right p-3 hover:bg-slate-50 border-b border-slate-50 last:border-0 transition-colors flex flex-col items-start"
+                          onClick={() => {
+                            setContactId(c.id)
+                            setContactName(c.full_name)
+                            setContactEmail(c.email || "")
+                            setContactPhone(c.phone || "")
+                            setShowContactSuggestions(false)
+                          }}
+                        >
+                          <span className="font-bold text-sm text-slate-800">{c.full_name}</span>
+                          <span className="text-[10px] text-slate-400">{c.email || c.phone || "ללא פרטים נוספים"}</span>
+                        </button>
+                      ))}
+                    {contacts.filter(c => c.full_name.toLowerCase().includes(contactName.toLowerCase())).length === 0 && (
+                      <div className="p-4 text-center text-slate-400 text-xs italic">
+                        איש קשר חדש: "{contactName}"
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* Close suggestions on click outside would be good, but for now we close on select */}
+              </div>
               
-              <TabsContent value="existing" className="animate-in fade-in slide-in-from-top-2 duration-300">
+              <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <Label className="text-xs font-bold text-slate-700">בחר מהרשימה</Label>
-                  <Select value={contactId} onValueChange={setContactId}>
-                    <SelectTrigger className="h-auto min-h-[44px] py-2 bg-white border-slate-200 rounded-xl px-4 text-right shadow-sm text-sm">
-                      <div className="flex items-center gap-3 w-full">
-                        <Users className="h-4 w-4 text-slate-400 shrink-0" />
-                        <div className="flex-1 overflow-hidden">
-                          <SelectValue placeholder="חיפוש איש קשר..." />
-                        </div>
-                      </div>
-                    </SelectTrigger>
-                    <SelectContent className="max-h-[200px] rounded-xl shadow-xl" dir="rtl">
-                      {contacts.length === 0 ? (
-                        <div className="p-4 text-center text-slate-400 text-xs italic">אין אנשי קשר עדיין</div>
-                      ) : (
-                        contacts.map(c => (
-                          <SelectItem key={c.id} value={c.id} className="py-2 focus:bg-slate-50 transition-colors text-sm">
-                            <div className="flex flex-col items-start gap-0.5">
-                              <span className="font-bold">{c.full_name}</span>
-                              <span className="text-[10px] text-slate-400">{c.email || c.phone || "ללא פרטים"}</span>
-                            </div>
-                          </SelectItem>
-                        ))
-                      )}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </TabsContent>
-              
-              <TabsContent value="new" className="space-y-3 animate-in fade-in slide-in-from-top-2 duration-300">
-                <div className="grid grid-cols-1 gap-3">
-                  <div className="space-y-1.5">
-                    <Label className="text-xs font-bold text-slate-700">שם מלא *</Label>
-                    <div className="relative">
-                      <User className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                      <Input
-                        value={newContactName}
-                        onChange={(e) => setNewContactName(e.target.value)}
-                        placeholder="ישראל ישראלי"
-                        className="pr-10 h-10 bg-white border-slate-200 rounded-xl shadow-sm font-medium text-sm"
-                      />
-                    </div>
-                  </div>
-                  
-                  <div className="grid grid-cols-2 gap-3">
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-bold text-slate-700">אימייל</Label>
-                      <div className="relative">
-                        <Mail className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                        <Input
-                          type="email"
-                          value={newContactEmail}
-                          onChange={(e) => setNewContactEmail(e.target.value)}
-                          placeholder="email@example.com"
-                          className="pr-10 h-10 bg-white border-slate-200 rounded-xl shadow-sm font-medium text-sm"
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label className="text-xs font-bold text-slate-700">טלפון</Label>
-                      <div className="relative">
-                        <Phone className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                        <Input
-                          value={newContactPhone}
-                          onChange={(e) => setNewContactPhone(e.target.value)}
-                          placeholder="050-0000000"
-                          className="pr-10 h-10 bg-white border-slate-200 rounded-xl shadow-sm font-medium text-sm"
-                        />
-                      </div>
-                    </div>
+                  <Label className="text-xs font-bold text-slate-700">אימייל</Label>
+                  <div className="relative">
+                    <Mail className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <Input
+                      type="email"
+                      value={contactEmail}
+                      onChange={(e) => setContactEmail(e.target.value)}
+                      placeholder="email@example.com"
+                      className="pr-10 h-10 bg-white border-slate-200 rounded-xl shadow-sm font-medium text-sm"
+                    />
                   </div>
                 </div>
-              </TabsContent>
-            </Tabs>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-bold text-slate-700">טלפון</Label>
+                  <div className="relative">
+                    <Phone className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <Input
+                      value={contactPhone}
+                      onChange={(e) => setContactPhone(e.target.value)}
+                      placeholder="050-0000000"
+                      className="pr-10 h-10 bg-white border-slate-200 rounded-xl shadow-sm font-medium text-sm"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Section: Deal Value */}

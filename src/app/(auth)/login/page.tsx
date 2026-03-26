@@ -4,18 +4,66 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
 import { createClient } from "@/lib/supabase/client"
+import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { toast } from "sonner"
-import { Loader2, ArrowRight } from "lucide-react"
+import { Loader2, Mail, Lock, CheckCircle2 } from "lucide-react"
 
-type Step = "email" | "password" | "setup"
+async function prefetchAfterLogin(supabase: ReturnType<typeof createClient>, queryClient: ReturnType<typeof useQueryClient>) {
+  try {
+    // Prefetch businesses in parallel with pipelines lookup
+    const { data: { user } } = await supabase.auth.getUser()
+    if (!user) return
+
+    const { data: membershipRows } = await supabase
+      .from("business_users")
+      .select("business_id, role")
+      .eq("user_id", user.id)
+
+    if (!membershipRows?.length) return
+
+    const ids = membershipRows.map((r) => r.business_id)
+    const { data: bizRows } = await supabase
+      .from("businesses")
+      .select("id, name")
+      .in("id", ids)
+
+    if (!bizRows?.length) return
+
+    // Cache business data
+    queryClient.setQueryData(["business-session"], {
+      user,
+      businesses: bizRows.map((b) => ({
+        id: b.id,
+        name: b.name,
+        role: membershipRows.find((m) => m.business_id === b.id)?.role ?? "agent",
+      })),
+    })
+
+    // Prefetch pipelines for the first business
+    const firstBusinessId = bizRows[0].id
+    const { data: pipelines } = await supabase
+      .from("pipelines")
+      .select("*, stages(*)")
+      .eq("business_id", firstBusinessId)
+      .order("created_at", { ascending: true })
+
+    if (pipelines) {
+      queryClient.setQueryData(["pipelines", firstBusinessId], pipelines)
+    }
+  } catch {
+    // Silent fail - prefetch is best-effort
+  }
+}
+
+type Step = "email" | "password" | "setup" | "magic-link-sent"
 
 export default function LoginPage() {
   const router = useRouter()
   const supabase = createClient()
+  const queryClient = useQueryClient()
   
   const [loading, setLoading] = useState(false)
   const [step, setStep] = useState<Step>("email")
@@ -24,6 +72,33 @@ export default function LoginPage() {
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [fullName, setFullName] = useState("")
+
+  const handleMagicLink = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault()
+    if (!email) {
+      toast.error("אנא הזן אימייל")
+      return
+    }
+
+    setLoading(true)
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
+        },
+      })
+
+      if (error) throw error
+
+      toast.success("קישור התחברות נשלח לאימייל שלך!")
+      setStep("magic-link-sent")
+    } catch (error: any) {
+      toast.error("שגיאה בשליחת קישור התחברות", { description: error.message })
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const handleCheckEmail = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -78,8 +153,11 @@ export default function LoginPage() {
         })
       } else {
         toast.success("התחברת בהצלחה")
-        router.push("/dashboard")
-        router.refresh()
+        // Prefetch critical data in background before navigating
+        prefetchAfterLogin(supabase, queryClient).finally(() => {
+          router.push("/dashboard")
+          router.refresh()
+        })
       }
     } catch (err) {
       toast.error("קרתה שגיאה בלתי צפויה")
@@ -122,8 +200,10 @@ export default function LoginPage() {
         setStep("password")
         setPassword("")
       } else {
-        router.push("/dashboard")
-        router.refresh()
+        prefetchAfterLogin(supabase, queryClient).finally(() => {
+          router.push("/dashboard")
+          router.refresh()
+        })
       }
     } catch (error: any) {
       toast.error("שגיאה", { description: error.message })
@@ -133,62 +213,94 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1 text-center">
-          <CardTitle className="text-3xl font-bold">כניסה למערכת</CardTitle>
-          <CardDescription>
-            {step === "email" && "הזן את האימייל שלך כדי להתחיל"}
-            {step === "password" && `שלום ${fullName || 'אורח'}, הזן את הסיסמה שלך`}
-            {step === "setup" && `ברוך הבא ${fullName || 'אורח'}! הגדר סיסמה לחשבון שלך`}
-          </CardDescription>
-        </CardHeader>
-        
-        {step === "email" && (
-          <form onSubmit={handleCheckEmail}>
-            <CardContent className="space-y-4">
-              <div className="space-y-2 text-start">
-                <Label htmlFor="email">אימייל</Label>
-                <Input
-                  id="email"
-                  type="email"
-                  placeholder="name@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                  className="text-start"
-                />
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col space-y-4">
-              <Button className="w-full" type="submit" disabled={loading}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "המשך"}
-              </Button>
-              <div className="text-center text-sm">
+    <div className="w-full">
+      <div className="text-center mb-10">
+        <div className="inline-flex items-center justify-center p-3 mb-6 rounded-2xl bg-primary/5 text-primary lg:hidden border border-primary/10">
+          <CheckCircle2 className="h-6 w-6" />
+        </div>
+        <h1 className="text-3xl font-extrabold mb-3 text-slate-900 tracking-tight">ברוך השב</h1>
+        <p className="text-slate-500 font-medium max-w-[280px] mx-auto leading-relaxed text-base">
+          {step === "email" && "הזן את האימייל שלך כדי להתחיל"}
+          {step === "password" && `שלום ${fullName || 'אורח'}, הזן את הסיסמה שלך`}
+          {step === "setup" && `ברוך הבא ${fullName || 'אורח'}! הגדר סיסמה לחשבון שלך`}
+          {step === "magic-link-sent" && "שלחנו לך אימייל עם קישור להתחברות מהירה"}
+        </p>
+      </div>
+
+      <div className="bg-white/50 backdrop-blur-md rounded-[2.5rem] border border-slate-100 p-1 lg:p-0 lg:bg-transparent lg:border-none lg:shadow-none shadow-xl shadow-slate-200/50">
+        <div className="p-6 lg:p-0">
+          {step === "email" && (
+            <div className="space-y-6">
+              <form onSubmit={handleCheckEmail} className="space-y-6">
+                <div className="space-y-3 text-right">
+                  <Label htmlFor="email" className="text-sm font-semibold text-slate-700 pr-1">אימייל</Label>
+                  <div className="relative group">
+                    <Input
+                      id="email"
+                      type="email"
+                      placeholder="name@example.com"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      required
+                      className="text-left h-14 bg-white border-slate-200 group-hover:border-primary/50 transition-all duration-300 rounded-2xl shadow-sm focus:ring-4 focus:ring-primary/5"
+                      dir="ltr"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <Button className="w-full h-14 text-lg font-bold shadow-xl shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all duration-200 rounded-2xl" type="submit" disabled={loading}>
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : "המשך עם סיסמה"}
+                  </Button>
+                  
+                  <div className="relative">
+                    <div className="absolute inset-0 flex items-center">
+                      <span className="w-full border-t border-slate-200" />
+                    </div>
+                    <div className="relative flex justify-center text-xs uppercase">
+                      <span className="bg-white px-2 text-slate-400 font-medium">או</span>
+                    </div>
+                  </div>
+
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    className="w-full h-14 text-lg font-bold border-slate-200 hover:bg-slate-50 transition-all duration-200 rounded-2xl" 
+                    onClick={handleMagicLink}
+                    disabled={loading}
+                  >
+                    {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : (
+                      <div className="flex items-center gap-2">
+                        <Mail className="h-5 w-5" />
+                        <span>התחברות דרך אימייל (Magic Link)</span>
+                      </div>
+                    )}
+                  </Button>
+                </div>
+              </form>
+              
+              <div className="text-center text-sm font-medium text-slate-500 pt-2">
                 אין לך חשבון?{" "}
-                <Link href="/register" className="text-primary hover:underline">
+                <Link href="/register" className="text-primary font-bold hover:underline transition-all">
                   הרשמה עכשיו
                 </Link>
               </div>
-            </CardFooter>
-          </form>
-        )}
+            </div>
+          )}
 
-        {step === "password" && (
-          <form onSubmit={handleLogin}>
-            <CardContent className="space-y-4">
-              <div className="flex items-center gap-2 mb-4 p-2 bg-muted rounded-md overflow-hidden">
-                <div className="flex-1 truncate text-sm">{email}</div>
-                <Button variant="ghost" size="sm" onClick={() => setStep("email")} className="h-7 px-2">
+          {step === "password" && (
+            <form onSubmit={handleLogin} className="space-y-6">
+              <div className="flex items-center gap-2 mb-6 p-4 bg-slate-50 border border-slate-100 rounded-2xl overflow-hidden shadow-inner">
+                <div className="flex-1 truncate text-sm font-bold text-slate-600 text-left" dir="ltr">{email}</div>
+                <Button variant="ghost" size="sm" onClick={() => setStep("email")} className="h-8 px-3 text-primary font-bold hover:text-primary/80 hover:bg-primary/5 rounded-xl transition-colors shrink-0">
                   שינוי
                 </Button>
               </div>
-              <div className="space-y-2 text-start">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password">סיסמה</Label>
+              <div className="space-y-3 text-right">
+                <div className="flex items-center justify-between flex-row-reverse mb-1 px-1">
+                  <Label htmlFor="password" className="text-sm font-semibold text-slate-700">סיסמה</Label>
                   <Link
                     href="/forgot-password"
-                    className="text-sm text-primary hover:underline"
+                    className="text-sm text-primary hover:underline font-bold"
                   >
                     שכחת סיסמה?
                   </Link>
@@ -200,59 +312,80 @@ export default function LoginPage() {
                   onChange={(e) => setPassword(e.target.value)}
                   required
                   autoFocus
-                  className="text-start"
+                  className="text-left h-14 bg-white border-slate-200 rounded-2xl shadow-sm focus:ring-4 focus:ring-primary/5"
+                  dir="ltr"
                 />
               </div>
-            </CardContent>
-            <CardFooter className="flex flex-col space-y-4">
-              <Button className="w-full" type="submit" disabled={loading}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "התחברות"}
+              <Button className="w-full h-14 text-lg font-bold shadow-xl shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all duration-200 rounded-2xl" type="submit" disabled={loading}>
+                {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : "התחברות"}
               </Button>
-            </CardFooter>
-          </form>
-        )}
+            </form>
+          )}
 
-        {step === "setup" && (
-          <form onSubmit={handleSetupPassword}>
-            <CardContent className="space-y-4">
-              <div className="flex items-center gap-2 mb-4 p-2 bg-muted rounded-md overflow-hidden">
-                <div className="flex-1 truncate text-sm">{email}</div>
-                <Button variant="ghost" size="sm" onClick={() => setStep("email")} className="h-7 px-2">
+          {step === "setup" && (
+            <form onSubmit={handleSetupPassword} className="space-y-6">
+              <div className="flex items-center gap-2 mb-6 p-4 bg-slate-50 border border-slate-100 rounded-2xl overflow-hidden shadow-inner">
+                <div className="flex-1 truncate text-sm font-bold text-slate-600 text-left" dir="ltr">{email}</div>
+                <Button variant="ghost" size="sm" onClick={() => setStep("email")} className="h-8 px-3 text-primary font-bold hover:text-primary/80 hover:bg-primary/5 rounded-xl shrink-0">
                   שינוי
                 </Button>
               </div>
-              <div className="space-y-2 text-start">
-                <Label htmlFor="newPassword">סיסמה חדשה</Label>
-                <Input
-                  id="newPassword"
-                  type="password"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  required
-                  autoFocus
-                  className="text-start"
-                />
+              <div className="space-y-4">
+                <div className="space-y-3 text-right">
+                  <Label htmlFor="newPassword" size="sm" className="font-semibold text-slate-700 pr-1">סיסמה חדשה</Label>
+                  <Input
+                    id="newPassword"
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    required
+                    autoFocus
+                    className="text-left h-14 bg-white border-slate-200 rounded-2xl shadow-sm focus:ring-4 focus:ring-primary/5"
+                    dir="ltr"
+                  />
+                </div>
+                <div className="space-y-3 text-right">
+                  <Label htmlFor="confirmPassword" size="sm" className="font-semibold text-slate-700 pr-1">אימות סיסמה</Label>
+                  <Input
+                    id="confirmPassword"
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    required
+                    className="text-left h-14 bg-white border-slate-200 rounded-2xl shadow-sm focus:ring-4 focus:ring-primary/5"
+                    dir="ltr"
+                  />
+                </div>
               </div>
-              <div className="space-y-2 text-start">
-                <Label htmlFor="confirmPassword">אימות סיסמה</Label>
-                <Input
-                  id="confirmPassword"
-                  type="password"
-                  value={confirmPassword}
-                  onChange={(e) => setConfirmPassword(e.target.value)}
-                  required
-                  className="text-start"
-                />
-              </div>
-            </CardContent>
-            <CardFooter className="flex flex-col space-y-4">
-              <Button className="w-full" type="submit" disabled={loading}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : "הגדר סיסמה והתחבר"}
+              <Button className="w-full h-14 text-lg font-bold shadow-xl shadow-primary/20 hover:shadow-primary/30 active:scale-[0.98] transition-all duration-200 rounded-2xl" type="submit" disabled={loading}>
+                {loading ? <Loader2 className="h-6 w-6 animate-spin" /> : "הגדר סיסמה והתחבר"}
               </Button>
-            </CardFooter>
-          </form>
-        )}
-      </Card>
+            </form>
+          )}
+
+          {step === "magic-link-sent" && (
+            <div className="text-center space-y-6">
+              <div className="inline-flex h-20 w-20 items-center justify-center rounded-full bg-primary/5 text-primary mb-2 border border-primary/10 animate-bounce">
+                <Mail className="h-10 w-10" />
+              </div>
+              <div className="space-y-2">
+                <h3 className="text-xl font-bold text-slate-900">בדוק את האימייל שלך</h3>
+                <p className="text-slate-500 text-sm">
+                  שלחנו קישור התחברות לכתובת <strong>{email}</strong>.<br />
+                  לחץ על הקישור כדי להיכנס למערכת.
+                </p>
+              </div>
+              <Button 
+                variant="ghost" 
+                className="w-full h-14 text-primary font-bold hover:bg-primary/5 rounded-2xl"
+                onClick={() => setStep("email")}
+              >
+                חזרה להתחברות
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

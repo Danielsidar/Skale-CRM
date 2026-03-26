@@ -119,6 +119,7 @@ export async function POST(req: NextRequest) {
       success: true,
       deal_id: deal!.id,
       contact_id: contactId,
+      is_duplicate: deal!.is_duplicate === true,
     });
   } catch (error: any) {
     console.error("API Error:", error);

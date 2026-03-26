@@ -22,6 +22,7 @@ import { Plus, X, Check, Loader2 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { createClient } from "@/lib/supabase/client"
 import { toast } from "sonner"
+import { memo } from "react"
 
 type Deal = Database["public"]["Tables"]["deals"]["Row"]
 
@@ -36,7 +37,7 @@ interface KanbanCardProps {
   canViewValue?: boolean
 }
 
-export function KanbanCard({ 
+export const KanbanCard = memo(function KanbanCard({ 
   deal, 
   index, 
   onDelete, 
@@ -292,4 +293,4 @@ export function KanbanCard({
       />
     </>
   )
-}
+})

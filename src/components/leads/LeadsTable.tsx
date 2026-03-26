@@ -39,7 +39,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu"
 import { Checkbox } from "@/components/ui/checkbox"
-import { useState } from "react"
+import { useState, useMemo, memo } from "react"
 import { QuickAddDealDialog } from "@/components/kanban/QuickAddDealDialog"
 import { CloseDealWonDialog } from "@/components/kanban/CloseDealWonDialog"
 import { useRouter } from "next/navigation"
@@ -55,7 +55,6 @@ import { toast } from "sonner"
 import { createClient } from "@/lib/supabase/client"
 import { moveDealStage } from "@/lib/services/crm"
 
-import { ContactDetailsSlider } from "@/components/contacts/ContactDetailsSlider"
 import { cn } from "@/lib/utils"
 
 type Stage = Database["public"]["Tables"]["stages"]["Row"]
@@ -94,9 +93,10 @@ interface LeadsTableProps {
   canViewPhone?: boolean
   canViewEmail?: boolean
   canViewContactSource?: boolean
+  onContactClick?: (id: string) => void
 }
 
-export function LeadsTable({ 
+export const LeadsTable = memo(function LeadsTable({ 
   leads, 
   onDelete, 
   onEditSuccess,
@@ -114,15 +114,27 @@ export function LeadsTable({
   canViewPhone = true,
   canViewEmail = true,
   canViewContactSource = true,
+  onContactClick,
 }: LeadsTableProps) {
   const canReassign = userRole === 'admin' || userRole === 'manager'
   const router = useRouter()
   const [editingLead, setEditingLead] = useState<LeadWithDetails | null>(null)
   const [updatingStageId, setUpdatingStageId] = useState<string | null>(null)
-  const [selectedContactId, setSelectedContactId] = useState<string | null>(null)
-  const [sliderOpen, setSliderOpen] = useState(false)
   const [wonDeal, setWonDeal] = useState<LeadWithDetails | null>(null)
   const [isWonDialogOpen, setIsWonDialogOpen] = useState(false)
+
+  // Memoize selected IDs as a Set for O(1) lookups instead of O(n) includes()
+  const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds])
+
+  // Memoize stages by pipeline for fast won/lost stage lookups
+  const stagesByPipeline = useMemo(() => {
+    const map = new Map<string, Stage[]>()
+    for (const s of allStages) {
+      if (!map.has(s.pipeline_id)) map.set(s.pipeline_id, [])
+      map.get(s.pipeline_id)!.push(s)
+    }
+    return map
+  }, [allStages])
   
   // Inline editing state
   const [editingField, setEditingField] = useState<{ id: string, field: 'title' | 'value' | 'tags' } | null>(null)
@@ -236,8 +248,7 @@ export function LeadsTable({
 
   const openEntity = async (id: { contactId?: string, dealId?: string }) => {
     if (id.contactId) {
-      setSelectedContactId(id.contactId)
-      setSliderOpen(true)
+      onContactClick?.(id.contactId)
     } else if (id.dealId) {
       // If we don't have a contactId, try to fetch it first instead of redirecting to a non-existent page
       try {
@@ -248,8 +259,7 @@ export function LeadsTable({
           .single()
         
         if (data?.contact_id) {
-          setSelectedContactId(data.contact_id)
-          setSliderOpen(true)
+          onContactClick?.(data.contact_id)
         } else {
           toast.error("לא נמצא איש קשר עבור ליד זה")
         }
@@ -262,23 +272,12 @@ export function LeadsTable({
 
   return (
     <div className="rounded-xl border border-border bg-card shadow-sm" dir="rtl">
-      <ContactDetailsSlider 
-        contactId={selectedContactId}
-        open={sliderOpen}
-        onOpenChange={setSliderOpen}
-        onActivityAdded={onEditSuccess}
-        canViewPhone={canViewPhone}
-        canViewEmail={canViewEmail}
-        canViewSource={canViewContactSource}
-        canViewDealValue={canViewValue}
-      />
       {wonDeal && (
         <CloseDealWonDialog
           open={isWonDialogOpen}
           onOpenChange={setIsWonDialogOpen}
           deal={wonDeal}
           businessId={wonDeal.business_id}
-          pipelineId={wonDeal.pipeline_id!}
           wonStageId={allStages.find(s => s.pipeline_id === wonDeal.pipeline_id && s.is_won)?.id || ""}
           onSuccess={handleWonSuccess}
           onCancel={() => {
@@ -356,12 +355,16 @@ export function LeadsTable({
             </TableRow>
           ) : (
             leads.map((lead) => {
-              const isSelected = selectedIds.includes(lead.id)
-              const wonStage = allStages.find(s => s.pipeline_id === lead.pipeline_id && s.is_won)
-              const lostStage = allStages.find(s => s.pipeline_id === lead.pipeline_id && s.is_lost)
+              const isSelected = selectedIdSet.has(lead.id)
+              const pipelineStages = stagesByPipeline.get(lead.pipeline_id) ?? []
+              const wonStage = pipelineStages.find(s => s.is_won)
+              const lostStage = pipelineStages.find(s => s.is_lost)
               
               return (
-                <TableRow key={lead.id} className={isSelected ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/30 border-b border-slate-100"}>
+                <TableRow key={lead.id} className={cn(
+                isSelected ? "bg-primary/5 hover:bg-primary/10" : "hover:bg-muted/30 border-b border-slate-100",
+                lead.stage?.is_won ? "bg-emerald-50/40 hover:bg-emerald-50/70" : lead.stage?.is_lost ? "bg-rose-50/30 hover:bg-rose-50/60" : ""
+              )}>
                   <TableCell className="px-3 text-right py-2.5">
                     <Checkbox 
                       checked={isSelected}
@@ -553,7 +556,10 @@ export function LeadsTable({
                             </div>
                           </TableCell>
                         )
-                      case 'stage':
+                      case 'stage': {
+                        const activeStagesForLead = allStages.filter(s => s.pipeline_id === lead.pipeline_id && !s.is_won && !s.is_lost)
+                        const wonStagesForLead = allStages.filter(s => s.pipeline_id === lead.pipeline_id && s.is_won)
+                        const lostStagesForLead = allStages.filter(s => s.pipeline_id === lead.pipeline_id && s.is_lost)
                         return (
                           <TableCell key="stage" className="text-right py-2.5">
                             <Select
@@ -564,35 +570,62 @@ export function LeadsTable({
                               <SelectTrigger 
                                 className="h-7 min-w-[100px] bg-transparent border-none shadow-none p-0 hover:bg-slate-50 transition-colors focus:ring-0 [&>svg]:hidden flex justify-start"
                               >
-                                <Badge
-                                  variant="outline"
-                                  className="font-bold text-[9px] px-2 py-0.5 rounded-full border-none shadow-sm cursor-pointer h-5"
-                                  style={{ 
-                                    backgroundColor: (lead.stage?.color || "#94a3b8") + "15",
-                                    color: lead.stage?.color || "#94a3b8"
-                                  }}
-                                >
-                                  {lead.stage?.name || "לא ידוע"}
-                                </Badge>
+                                {lead.stage?.is_won ? (
+                                  <Badge className="font-bold text-[9px] px-2 py-0.5 rounded-full border-none shadow-sm cursor-pointer h-5 bg-emerald-100 text-emerald-700 hover:bg-emerald-100 flex items-center gap-1">
+                                    <Trophy className="h-2.5 w-2.5" />
+                                    נסגר
+                                  </Badge>
+                                ) : lead.stage?.is_lost ? (
+                                  <Badge className="font-bold text-[9px] px-2 py-0.5 rounded-full border-none shadow-sm cursor-pointer h-5 bg-rose-100 text-rose-700 hover:bg-rose-100 flex items-center gap-1">
+                                    <XCircle className="h-2.5 w-2.5" />
+                                    {lead.stage?.name || "אבוד"}
+                                  </Badge>
+                                ) : (
+                                  <Badge
+                                    variant="outline"
+                                    className="font-bold text-[9px] px-2 py-0.5 rounded-full border-none shadow-sm cursor-pointer h-5"
+                                    style={{ 
+                                      backgroundColor: (lead.stage?.color || "#94a3b8") + "15",
+                                      color: lead.stage?.color || "#94a3b8"
+                                    }}
+                                  >
+                                    {lead.stage?.name || "לא ידוע"}
+                                  </Badge>
+                                )}
                               </SelectTrigger>
                               <SelectContent align="end" position="popper" className="text-right" dir="rtl">
-                                {allStages
-                                  .filter(s => s.pipeline_id === lead.pipeline_id && !s.is_won && !s.is_lost)
-                                  .map(stage => (
-                                    <SelectItem key={stage.id} value={stage.id} className="text-[11px] font-bold py-2">
-                                      <div className="flex items-center gap-2">
-                                        <div 
-                                          className="h-2 w-2 rounded-full" 
-                                          style={{ backgroundColor: stage.color || "#94a3b8" }} 
-                                        />
-                                        {stage.name}
-                                      </div>
-                                    </SelectItem>
-                                  ))}
+                                {activeStagesForLead.map(stage => (
+                                  <SelectItem key={stage.id} value={stage.id} className="text-[11px] font-bold py-2">
+                                    <div className="flex items-center gap-2">
+                                      <div className="h-2 w-2 rounded-full" style={{ backgroundColor: stage.color || "#94a3b8" }} />
+                                      {stage.name}
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                                {(wonStagesForLead.length > 0 || lostStagesForLead.length > 0) && (
+                                  <div className="my-1 border-t border-slate-100" />
+                                )}
+                                {wonStagesForLead.map(stage => (
+                                  <SelectItem key={stage.id} value={stage.id} className="text-[11px] font-bold py-2 text-emerald-700">
+                                    <div className="flex items-center gap-2">
+                                      <Trophy className="h-3 w-3 text-emerald-500" />
+                                      נסגר
+                                    </div>
+                                  </SelectItem>
+                                ))}
+                                {lostStagesForLead.map(stage => (
+                                  <SelectItem key={stage.id} value={stage.id} className="text-[11px] font-bold py-2 text-rose-700">
+                                    <div className="flex items-center gap-2">
+                                      <XCircle className="h-3 w-3 text-rose-500" />
+                                      {stage.name}
+                                    </div>
+                                  </SelectItem>
+                                ))}
                               </SelectContent>
                             </Select>
                           </TableCell>
                         )
+                      }
                       case 'value':
                         return (
                           <TableCell key="value" className="font-black text-emerald-600 text-[11px] text-right py-2.5">
@@ -751,4 +784,4 @@ export function LeadsTable({
       )}
     </div>
   )
-}
+})

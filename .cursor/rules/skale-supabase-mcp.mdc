@@ -1,0 +1,14 @@
+---
+description: Skale CRM Supabase project + which MCP server to use for SQL and Edge Functions
+globs: supabase/**/*
+alwaysApply: false
+---
+
+# Skale CRM — Supabase MCP
+
+- **Project ref / `project_id` for MCP tools:** `lfesnecqgcvkblfscghj` (Skale CRM). Match the host in `NEXT_PUBLIC_SUPABASE_URL` (`*.supabase.co`).
+- **Cursor MCP server:** use the Supabase MCP connection that lists **Skale CRM** (e.g. **`user-supabase-third`**). Do **not** assume `user-supabase-main` has access — it often returns “privileges” errors for this repo.
+- **Prefer MCP for:** `execute_sql`, `list_tables`, `list_migrations`, `apply_migration` (DDL), `list_edge_functions`, `get_edge_function`, `get_logs`, `deploy_edge_function`.
+- **`deploy_edge_function`:** pass the full `index.ts` source in `files[].content`. Never deploy placeholder or truncated code. If the payload is too large for a single tool call, use **Supabase CLI** from the repo root:  
+  `supabase functions deploy automation-engine --project-ref lfesnecqgcvkblfscghj`
+- **בדיקות מקומיות:** `npm run test:green-phone` (נרמול מספר ל־Green API); `npm run smoke:automation-engine -- <business_id> <entity_id> [trigger_subtype] [entity_type]` — טוען `.env.local` (דורש `SUPABASE_SERVICE_ROLE_KEY`).

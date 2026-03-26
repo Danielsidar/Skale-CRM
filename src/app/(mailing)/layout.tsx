@@ -5,6 +5,9 @@ import { Header } from "@/components/layouts/Header"
 import { BusinessGuard } from "@/components/layouts/BusinessGuard"
 import { useSidebarStore } from "@/lib/store"
 import { cn } from "@/lib/utils"
+import { useTierFeatures } from "@/lib/hooks/useTierFeatures"
+import { useRouter } from "next/navigation"
+import { useEffect } from "react"
 
 export default function MailingLayout({
   children,
@@ -12,6 +15,16 @@ export default function MailingLayout({
   children: React.ReactNode
 }) {
   const { isCollapsed } = useSidebarStore()
+  const { features, loading } = useTierFeatures()
+  const router = useRouter()
+
+  useEffect(() => {
+    if (!loading && !features.mailing) {
+      router.replace("/dashboard")
+    }
+  }, [features.mailing, loading, router])
+
+  if (loading || !features.mailing) return null
 
   return (
     <div className="min-h-screen bg-background text-foreground flex">
