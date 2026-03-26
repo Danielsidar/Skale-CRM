@@ -44,7 +44,7 @@ const menuItems: {
   tierFeature?: keyof TierFeatures
 }[] = [
   { name: "סקירה", href: "/dashboard", icon: LayoutDashboard, permission: "view_dashboard" },
-  { name: "יומן פגישות", href: "/calendar", icon: Calendar, permission: "view_dashboard", tierFeature: "booking" },
+  { name: "יומן פגישות", href: "/calendar", icon: Calendar, permission: "view_calendar", tierFeature: "booking" },
   { name: "לידים", href: "/leads", icon: Target, permission: "view_leads" },
   { name: "פייפליינים", href: "/pipelines", icon: Kanban, permission: "view_leads" },
   { name: "אוטומציות", href: "/automations", icon: Zap, permission: "view_automations", tierFeature: "automations" },

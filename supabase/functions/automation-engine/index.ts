@@ -38,7 +38,11 @@ function getValue(obj: unknown, path: string): unknown {
 
 function interpolate(template: string, ctx: Record<string, unknown>): string {
   return template.replace(/\{\{([^}]+)\}\}/g, (_, key) => {
-    const v = getValue(ctx, key.trim())
+    const trimmedKey = key.trim()
+    const v = getValue(ctx, trimmedKey)
+    if (v == null || String(v) === "") {
+      console.warn(`[interpolate] variable "{{${trimmedKey}}}" resolved to empty — check context`)
+    }
     return v != null ? String(v) : ""
   })
 }
@@ -239,11 +243,19 @@ Deno.serve(async (req: Request) => {
     let relatedContact: Record<string, unknown> = {}
 
     if (entity_type === "deal") {
-      const { data } = await supabase.from("deals").select("*").eq("id", entity_id).single()
+      const { data, error: dealErr } = await supabase.from("deals").select("*").eq("id", entity_id).single()
+      if (dealErr || !data) {
+        console.error("[automation-engine] failed to fetch deal", entity_id, dealErr?.message)
+      }
       entity = (data as Record<string, unknown>) ?? {}
       const contactId = entity?.contact_id as string | undefined
-      if (contactId) {
-        const { data: c } = await supabase.from("contacts").select("*").eq("id", contactId).single()
+      if (!contactId) {
+        console.warn("[automation-engine] deal has no contact_id — contact variables will be empty", { entity_id, trigger: trigger_subtype })
+      } else {
+        const { data: c, error: contactErr } = await supabase.from("contacts").select("*").eq("id", contactId).single()
+        if (contactErr || !c) {
+          console.error("[automation-engine] failed to fetch contact for deal", { contactId, entity_id }, contactErr?.message)
+        }
         relatedContact = (c as Record<string, unknown>) ?? {}
       }
     } else if (entity_type === "contact") {
@@ -252,6 +264,11 @@ Deno.serve(async (req: Request) => {
     } else if (entity_type === "task" || entity_type === "activity") {
       const { data } = await supabase.from("activities").select("*").eq("id", entity_id).single()
       entity = (data as Record<string, unknown>) ?? {}
+      const contactId = entity?.contact_id as string | undefined
+      if (contactId) {
+        const { data: c } = await supabase.from("contacts").select("*").eq("id", contactId).single()
+        relatedContact = (c as Record<string, unknown>) ?? {}
+      }
     }
 
     const ctx: Record<string, unknown> = {
@@ -270,6 +287,23 @@ Deno.serve(async (req: Request) => {
     ctx.contact = {
       ...contactMerged,
       first_name: contactMerged.first_name ?? firstNameFromFullName(contactMerged.full_name),
+    }
+
+    const resolvedContact = ctx.contact as Record<string, unknown>
+    if (!resolvedContact.full_name && !resolvedContact.first_name) {
+      console.warn("[automation-engine] contact is empty — all {{contact.*}} variables will be blank", {
+        trigger: trigger_subtype,
+        entity_type,
+        entity_id,
+        relatedContactKeys: Object.keys(relatedContact),
+        payloadContactKeys: Object.keys((payload?.contact as object) ?? {}),
+      })
+    } else {
+      console.log("[automation-engine] contact resolved", {
+        first_name: resolvedContact.first_name,
+        full_name: resolvedContact.full_name,
+        id: resolvedContact.id,
+      })
     }
 
     const contactIdForAppt =
