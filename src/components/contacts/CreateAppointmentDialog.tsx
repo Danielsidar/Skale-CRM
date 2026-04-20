@@ -63,19 +63,27 @@ export function CreateAppointmentDialog({
   const [loadingMembers, setLoadingMembers] = useState(false)
   const supabase = createClient()
 
+  const getFormDefaults = useCallback((): AppointmentFormValues => ({
+    title: `פגישה עם ${contactName}`,
+    description: "",
+    date: new Date().toISOString().split("T")[0],
+    time: "10:00",
+    duration: "60",
+    location: "",
+    meeting_link: "",
+    assigned_to_user_id: ""
+  }), [contactName])
+
   const form = useForm<AppointmentFormValues>({
     resolver: zodResolver(appointmentSchema),
-    defaultValues: {
-      title: `פגישה עם ${contactName}`,
-      description: "",
-      date: new Date().toISOString().split("T")[0],
-      time: "10:00",
-      duration: "60",
-      location: "",
-      meeting_link: "",
-      assigned_to_user_id: ""
-    }
+    defaultValues: getFormDefaults(),
   })
+
+  // defaultValues apply only on first mount; reset whenever the dialog opens or the contact changes
+  useEffect(() => {
+    if (!open) return
+    form.reset(getFormDefaults())
+  }, [open, contactId, contactName, getFormDefaults, form])
 
   const loadMembers = useCallback(async () => {
     if (!businessId || !open) return
@@ -150,7 +158,7 @@ export function CreateAppointmentDialog({
       toast.success("הפגישה נקבעה בהצלחה")
       onSuccess()
       onOpenChange(false)
-      form.reset()
+      form.reset(getFormDefaults())
     } catch (error: any) {
       console.error("Error creating appointment:", error)
       toast.error("שגיאה בקביעת הפגישה", { description: error.message })

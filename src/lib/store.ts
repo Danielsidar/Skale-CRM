@@ -5,12 +5,16 @@ interface SidebarState {
   isCollapsed: boolean
   toggleSidebar: () => void
   setCollapsed: (collapsed: boolean) => void
+  mobileNavOpen: boolean
+  setMobileNavOpen: (open: boolean) => void
 }
 
 export const useSidebarStore = create<SidebarState>((set) => ({
   isCollapsed: false,
   toggleSidebar: () => set((state) => ({ isCollapsed: !state.isCollapsed })),
   setCollapsed: (collapsed) => set({ isCollapsed: collapsed }),
+  mobileNavOpen: false,
+  setMobileNavOpen: (open) => set({ mobileNavOpen: open }),
 }))
 
 const BUSINESS_STORAGE_KEY = 'skale-active-business-id'

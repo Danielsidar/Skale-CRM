@@ -125,7 +125,7 @@ export function ContactDetailsSlider({
         supabase
           .from("activities")
           .select("*")
-          .or(`contact_id.in.(${allContactIds.join(",")})`)
+          .eq("contact_id", contactId)
           .order("created_at", { ascending: false }),
         supabase
           .from("appointments")

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react"
 import { createClient } from "@/lib/supabase/client"
 import { useRouter } from "next/navigation"
-import { User, Settings, LogOut, HelpCircle, ChevronDown, ShieldCheck } from "lucide-react"
+import { User, Settings, LogOut, HelpCircle, ChevronDown, ShieldCheck, Menu } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
@@ -16,6 +16,7 @@ import {
 import { useBusiness } from "@/lib/hooks/useBusiness"
 import { NotificationsPopover } from "./NotificationsPopover"
 import { SearchCommand } from "./SearchCommand"
+import { useSidebarStore } from "@/lib/store"
 
 const roleLabels: Record<string, string> = {
   admin: "מנהל",
@@ -26,6 +27,7 @@ const roleLabels: Record<string, string> = {
 export function Header() {
   const supabase = useMemo(() => createClient(), [])
   const router = useRouter()
+  const { setMobileNavOpen } = useSidebarStore()
   const { businesses, businessId } = useBusiness()
   const [displayName, setDisplayName] = useState("")
   const [email, setEmail] = useState("")
@@ -60,8 +62,18 @@ export function Header() {
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border bg-background">
-      <div className="flex h-16 items-center justify-end px-4 sm:px-8">
-        <div className="flex items-center gap-3">
+      <div className="flex h-16 items-center px-4 sm:px-8 gap-3">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon"
+          className="lg:hidden shrink-0 -mr-1"
+          onClick={() => setMobileNavOpen(true)}
+          aria-label="פתח תפריט ניווט"
+        >
+          <Menu className="h-5 w-5" />
+        </Button>
+        <div className="flex items-center gap-3 ms-auto">
           <SearchCommand />
           <NotificationsPopover />
 

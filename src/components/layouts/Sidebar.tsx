@@ -1,9 +1,16 @@
 "use client"
 
 import Link from "next/link"
+import { Fragment, useState, useEffect } from "react"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { useSidebarStore } from "@/lib/store"
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet"
 import { 
   LayoutDashboard, 
   Calendar,
@@ -31,7 +38,6 @@ import {
 } from "@/components/ui/tooltip"
 import { createClient } from "@/lib/supabase/client"
 import { Button } from "@/components/ui/button"
-import { useState, useEffect } from "react"
 import { useTierFeatures } from "@/lib/hooks/useTierFeatures"
 import type { TierFeatures } from "@/lib/tiers"
 
@@ -60,7 +66,7 @@ export function Sidebar() {
   const pathname = usePathname()
   const router = useRouter()
   const supabase = createClient()
-  const { isCollapsed, toggleSidebar } = useSidebarStore()
+  const { isCollapsed, toggleSidebar, mobileNavOpen, setMobileNavOpen } = useSidebarStore()
   const { features, loading: featuresLoading } = useTierFeatures()
   const [allowedPages, setAllowedPages] = useState<Set<string>>(new Set())
   const [isAdmin, setIsAdmin] = useState(false)
@@ -115,6 +121,7 @@ export function Sidebar() {
   })
 
   return (
+    <Fragment>
     <aside
       className={cn(
         "fixed inset-y-0 right-0 z-50 sidebar-bg transition-all duration-300 ease-in-out overflow-x-hidden",
@@ -237,5 +244,74 @@ export function Sidebar() {
         </div>
       </div>
     </aside>
+
+    <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
+      <SheetContent
+        side="right"
+        className="w-[min(100vw-2rem,20rem)] sidebar-bg border-white/10 p-0 flex flex-col lg:hidden"
+        dir="rtl"
+      >
+        <SheetHeader className="p-6 border-b border-white/10 space-y-1">
+          <SheetTitle className="text-white text-right font-bold text-xl flex items-center gap-3 justify-end">
+            <BookOpen className="h-8 w-8 text-cyan-400 shrink-0" />
+            Skale
+          </SheetTitle>
+        </SheetHeader>
+        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
+          {!loading && !featuresLoading && filteredMenuItems.map((item) => {
+            const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                target={item.target}
+                rel={item.target === "_blank" ? "noopener noreferrer" : undefined}
+                onClick={() => setMobileNavOpen(false)}
+                className={cn(
+                  "flex items-center gap-4 px-4 py-3 text-sm font-medium rounded-lg transition-all",
+                  isActive
+                    ? "active-nav-item text-white"
+                    : "text-slate-400 hover:text-white hover:bg-white/5"
+                )}
+              >
+                <item.icon
+                  className={cn(
+                    "h-5 w-5 shrink-0",
+                    isActive ? "text-primary" : "text-slate-400"
+                  )}
+                />
+                <span className="truncate flex items-center gap-2">
+                  {item.name}
+                  {item.target === "_blank" && (
+                    <ExternalLink className="h-3 w-3 opacity-60 shrink-0" />
+                  )}
+                </span>
+              </Link>
+            )
+          })}
+          {(loading || featuresLoading) && (
+            <div className="flex justify-center py-6">
+              <Loader2 className="h-6 w-6 animate-spin text-slate-500" />
+            </div>
+          )}
+        </nav>
+        <div className="border-t border-white/10 p-4 space-y-2">
+          <Button
+            variant="ghost"
+            className="w-full justify-start text-slate-400 hover:text-rose-400 hover:bg-rose-500/5 rounded-lg h-12 gap-4 px-4"
+            onClick={async () => {
+              setMobileNavOpen(false)
+              await supabase.auth.signOut()
+              router.push("/login")
+              router.refresh()
+            }}
+          >
+            <LogOut className="h-5 w-5 shrink-0" />
+            <span className="text-sm font-medium">התנתקות</span>
+          </Button>
+        </div>
+      </SheetContent>
+    </Sheet>
+    </Fragment>
   )
 }

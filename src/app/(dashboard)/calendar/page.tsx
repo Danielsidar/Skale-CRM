@@ -311,8 +311,21 @@ export default function CalendarPage() {
             return (
               <div
                 key={day.toString()}
+                role="button"
+                tabIndex={0}
+                onClick={() => {
+                  setCurrentDate(day)
+                  setView("day")
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault()
+                    setCurrentDate(day)
+                    setView("day")
+                  }
+                }}
                 className={cn(
-                  "min-h-[120px] border-r border-b p-2 transition-colors",
+                  "min-h-[120px] border-r border-b p-2 transition-colors cursor-pointer hover:bg-slate-50/80 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/30",
                   !isSameMonth(day, monthStart) ? "bg-slate-50/50" : "bg-white",
                   isToday(day) && "bg-primary/5 ring-1 ring-primary/20 z-10"
                 )}
@@ -335,7 +348,8 @@ export default function CalendarPage() {
                           appt.status === 'completed' ? "bg-emerald-50 border-emerald-100 text-emerald-700" :
                           "bg-slate-50 border-slate-100 text-slate-500"
                         )}
-                        onClick={() => {
+                        onClick={(e) => {
+                          e.stopPropagation()
                           setSelectedAppt(appt)
                           setIsEditOpen(true)
                         }}
@@ -344,7 +358,14 @@ export default function CalendarPage() {
                       </div>
                   ))}
                   {dayAppts.length > 3 && (
-                    <div className="text-[9px] text-muted-foreground text-center font-medium">
+                    <div
+                      className="text-[9px] text-muted-foreground text-center font-medium cursor-pointer hover:text-primary"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setCurrentDate(day)
+                        setView("day")
+                      }}
+                    >
                       +{dayAppts.length - 3} נוספים
                     </div>
                   )}
